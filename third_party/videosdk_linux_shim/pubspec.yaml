@@ -1,0 +1,18 @@
+name: videosdk_linux_shim
+description: Linux channel shim for the VideoSDK Flutter package.
+version: 0.0.1
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        pluginClass: VideosdkLinuxShimPlugin
