@@ -19,7 +19,10 @@ import 'services/queue_service.dart';
 import 'services/report_service.dart';
 import 'services/sound_service.dart';
 import 'services/storage/token_storage.dart';
+import 'services/tray_service.dart';
 import 'widgets/call_alert_monitor.dart';
+
+final _trayService = AppTrayService();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +44,9 @@ Future<void> main() async {
     windowManager.setPreventClose(true);
     windowManager.addListener(_WindowCloseHandler());
   }
+
+  await _trayService.init();
+
   final notificationService = NotificationService();
 
   if (Platform.isWindows || Platform.isLinux) {
@@ -125,6 +131,7 @@ class GestalkApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: attendancesController),
         ChangeNotifierProvider.value(value: callController),
         ChangeNotifierProvider.value(value: reportsController),
+        Provider<AppTrayService>.value(value: _trayService),
       ],
       child: MaterialApp.router(
         title: AppConfig.appName,

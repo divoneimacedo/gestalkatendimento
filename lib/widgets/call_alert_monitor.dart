@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/queue_controller.dart';
 import '../core/router/app_router.dart';
+import '../services/tray_service.dart';
 
 class CallAlertMonitor extends StatefulWidget {
   final Widget child;
@@ -68,6 +69,10 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
     _activeSlug = null;
     _firstCheck = true;
     _knownCallIds = {};
+
+    if (mounted) {
+      unawaited(context.read<AppTrayService>().clearWaitingCalls());
+    }
   }
 
   Future<void> _checkQueue() async {
@@ -75,6 +80,7 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
 
     _checking = true;
     final queue = context.read<QueueController>();
+    final tray = context.read<AppTrayService>();
 
     try {
       await queue.refresh(slug: _activeSlug!, enableAlerts: false);
@@ -88,8 +94,10 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
 
       if (hasCalls) {
         await queue.soundService.startContinuousAlert();
+        await tray.showWaitingCalls(queue.calls.length);
       } else {
         await queue.soundService.stop();
+        await tray.clearWaitingCalls();
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
         }
