@@ -8,6 +8,23 @@
 #include "flutter/generated_plugin_registrant.h"
 
 static constexpr const char* kApplicationTitle = "Gestalk Atendimento";
+static constexpr const char* kApplicationIconAsset =
+    "data/flutter_assets/assets/images/logo.png";
+
+static void set_window_icon(GtkWindow* window) {
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path == nullptr) {
+    return;
+  }
+
+  g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+  g_autofree gchar* icon_path = g_build_filename(
+      exe_dir, kApplicationIconAsset, nullptr);
+
+  if (g_file_test(icon_path, G_FILE_TEST_EXISTS)) {
+    gtk_window_set_icon_from_file(window, icon_path, nullptr);
+  }
+}
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -54,8 +71,7 @@ static void my_application_activate(GApplication* application) {
     gtk_window_set_title(window, kApplicationTitle);
   }
 
-  gtk_window_set_icon_from_file(
-      window, "data/flutter_assets/assets/images/logo.png", nullptr);
+  set_window_icon(window);
 
   gtk_window_set_default_size(window, 1280, 720);
 

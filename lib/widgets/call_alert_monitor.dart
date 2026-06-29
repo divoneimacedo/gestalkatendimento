@@ -7,6 +7,8 @@ import 'package:provider/provider.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/queue_controller.dart';
 import '../core/router/app_router.dart';
+import '../core/config/app_theme.dart';
+import '../models/queue_call.dart';
 import '../services/tray_service.dart';
 
 class CallAlertMonitor extends StatefulWidget {
@@ -71,6 +73,7 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
     _knownCallIds = {};
 
     if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       unawaited(context.read<AppTrayService>().clearWaitingCalls());
     }
   }
@@ -88,9 +91,11 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
       if (!mounted) return;
 
       final currentCallIds = queue.calls.map((call) => call.id).toSet();
+      final removedCallIds = _knownCallIds.difference(currentCallIds);
       final newCallIds = currentCallIds.difference(_knownCallIds);
       final hasCalls = currentCallIds.isNotEmpty;
       final shouldAlert = _firstCheck ? hasCalls : newCallIds.isNotEmpty;
+      final isInCallRoute = _isInCallRoute();
 
       if (hasCalls) {
         await queue.soundService.startContinuousAlert();
@@ -103,14 +108,19 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
         }
       }
 
-      if (shouldAlert) {
+      if (removedCallIds.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      }
+
+      if (shouldAlert && !isInCallRoute) {
         try {
-          await queue.notificationService.showNewCall(count: queue.calls.length);
+          await queue.notificationService
+              .showNewCall(count: queue.calls.length);
         } catch (_) {
           // O SnackBar e o som continuam funcionando mesmo se a notificação
           // nativa não estiver disponível no sistema operacional.
         }
-        _showQueueSnackBar(queue.calls.length);
+        _showQueueSnackBar(queue.calls.first, queue.calls.length);
       }
 
       _knownCallIds = currentCallIds;
@@ -120,36 +130,200 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
     }
   }
 
-  void _showQueueSnackBar(int count) {
+  void _showQueueSnackBar(QueueCall call, int count) {
     final messenger = ScaffoldMessenger.of(context);
 
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(
-            count > 1
-                ? 'Você tem $count atendimentos aguardando.'
-                : 'Você tem um novo atendimento aguardando.',
+          content: _CallSnackContent(
+            call: call,
+            count: count,
+            onAccept: () => _acceptCallFromSnack(call),
+            onCancel: () => _cancelCallFromSnack(call),
+            onOpenQueue: _openQueue,
           ),
           behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 12),
-          action: SnackBarAction(
-            label: 'Ver fila',
-            onPressed: () {
-              final slug = _activeSlug;
-              if (slug == null) return;
-              final routerContext = AppRouter.rootNavigatorKey.currentContext;
-              if (routerContext == null) return;
-              GoRouter.of(routerContext).go('/queue/$slug');
-            },
-          ),
+          duration: const Duration(seconds: 20),
         ),
       );
+  }
+
+  Future<void> _acceptCallFromSnack(QueueCall call) async {
+    final slug = _activeSlug;
+    if (slug == null || !mounted) return;
+
+    final queue = context.read<QueueController>();
+    final auth = context.read<AuthController>();
+    final attendantId = auth.user?.id ?? '';
+    final routerContext = AppRouter.rootNavigatorKey.currentContext;
+    final router = routerContext == null ? null : GoRouter.of(routerContext);
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    await queue.accept(call, attendantId);
+
+    if (!mounted || router == null) return;
+    router.go('/call/$slug/${call.id}');
+  }
+
+  Future<void> _cancelCallFromSnack(QueueCall call) async {
+    final slug = _activeSlug;
+    if (slug == null || !mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    await context.read<QueueController>().cancel(call.id, slug);
+  }
+
+  void _openQueue() {
+    final slug = _activeSlug;
+    if (slug == null) return;
+
+    final routerContext = AppRouter.rootNavigatorKey.currentContext;
+    if (routerContext == null) return;
+    GoRouter.of(routerContext).go('/queue/$slug');
+  }
+
+  bool _isInCallRoute() {
+    final routerContext = AppRouter.rootNavigatorKey.currentContext;
+    if (routerContext == null) return false;
+
+    try {
+      final path = GoRouter.of(routerContext)
+          .routerDelegate
+          .currentConfiguration
+          .uri
+          .path;
+
+      return path.startsWith('/call/');
+    } catch (_) {
+      return false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return widget.child;
+  }
+}
+
+class _CallSnackContent extends StatelessWidget {
+  final QueueCall call;
+  final int count;
+  final VoidCallback onAccept;
+  final VoidCallback onCancel;
+  final VoidCallback onOpenQueue;
+
+  const _CallSnackContent({
+    required this.call,
+    required this.count,
+    required this.onAccept,
+    required this.onCancel,
+    required this.onOpenQueue,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final title = count > 1
+        ? '$count atendimentos aguardando'
+        : 'Novo atendimento aguardando';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.call, color: Colors.white, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: onOpenQueue,
+              child: const Text('Ver fila'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 14,
+          runSpacing: 4,
+          children: [
+            _InfoText(label: 'Canal', value: call.channelName ?? '-'),
+            if ((call.protocol ?? '').isNotEmpty)
+              _InfoText(label: 'Protocolo', value: call.protocol!),
+            _InfoText(label: 'Espera', value: call.waitingTime ?? '-'),
+            if ((call.caller ?? '').isNotEmpty)
+              _InfoText(label: 'Solicitante', value: call.caller!),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.success,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+                onPressed: onAccept,
+                icon: const Icon(Icons.call, size: 18),
+                label: const Text('Atender'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.cancel,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+                onPressed: onCancel,
+                icon: const Icon(Icons.close, size: 18),
+                label: const Text('Cancelar'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoText extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoText({
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(color: Colors.white),
+        children: [
+          TextSpan(
+            text: '$label: ',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
+          ),
+          TextSpan(
+            text: value,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -240,7 +240,11 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     if (context.mounted) {
-      context.go('/queue/${widget.slug}');
+      final protocol = controller.currentCall?.protocol ?? '';
+      final encodedProtocol = Uri.encodeComponent(protocol);
+      context.go(
+        '/call-review/${widget.slug}/${widget.callId}?protocol=$encodedProtocol',
+      );
     }
   }
 

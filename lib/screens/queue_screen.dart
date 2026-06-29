@@ -151,6 +151,7 @@ class _QueueScreenState extends State<QueueScreen> {
               final attendantId = auth.user?.id ?? '';
               await controller.accept(call, attendantId);
               if (context.mounted) {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 context.go('/call/${widget.slug}/${call.id}');
               }
             },
@@ -181,6 +182,9 @@ class _QueueScreenState extends State<QueueScreen> {
               );
               if (confirmed == true) {
                 await controller.cancel(call.id, widget.slug);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                }
               }
             },
             child: const Icon(Icons.close, size: 18),

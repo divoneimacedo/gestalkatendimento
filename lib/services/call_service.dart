@@ -31,6 +31,23 @@ class CallService {
     await apiService.dio.delete('/calls/$callId');
   }
 
+  Future<void> submitReview({
+    required String callId,
+    required int rating,
+    required String description,
+    String? userId,
+  }) async {
+    await apiService.dio.post<dynamic>(
+      '/review',
+      data: {
+        'callId': callId,
+        'rating': rating,
+        'description': description,
+        if (userId != null && userId.isNotEmpty) 'userId': userId,
+      },
+    );
+  }
+
   Future<String> getVideoSdkToken() async {
     final response = await apiService.dio.get<dynamic>('/get-token');
     final data = response.data;

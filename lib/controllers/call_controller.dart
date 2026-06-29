@@ -12,6 +12,7 @@ class CallController extends ChangeNotifier {
   String? videoSdkToken;
   bool loading = false;
   bool finishing = false;
+  bool reviewing = false;
   String? error;
 
   Future<void> load(String callId) async {
@@ -46,6 +47,32 @@ class CallController extends ChangeNotifier {
       rethrow;
     } finally {
       finishing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> submitReview({
+    required String callId,
+    required int rating,
+    required String description,
+    String? userId,
+  }) async {
+    reviewing = true;
+    error = null;
+    notifyListeners();
+
+    try {
+      await callService.submitReview(
+        callId: callId,
+        rating: rating,
+        description: description,
+        userId: userId,
+      );
+    } catch (_) {
+      error = 'Não foi possível enviar a avaliação.';
+      rethrow;
+    } finally {
+      reviewing = false;
       notifyListeners();
     }
   }

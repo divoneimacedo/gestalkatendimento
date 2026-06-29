@@ -6,6 +6,7 @@ import '../../controllers/auth_controller.dart';
 import '../../models/user.dart';
 import '../../screens/attendances_screen.dart';
 import '../../screens/call_screen.dart';
+import '../../screens/call_review_screen.dart';
 import '../../screens/login_screen.dart';
 import '../../screens/placeholder_page_screen.dart';
 import '../../screens/queue_screen.dart';
@@ -155,6 +156,14 @@ class AppRouter {
           builder: (_, state) => CallScreen(
             slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
             callId: state.pathParameters['id'] ?? '',
+          ),
+        ),
+        GoRoute(
+          path: '/call-review/:slug/:id',
+          builder: (_, state) => CallReviewScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            callId: state.pathParameters['id'] ?? '',
+            protocol: state.uri.queryParameters['protocol'] ?? '',
           ),
         ),
       ],

@@ -30,8 +30,9 @@ class AppTrayService with TrayListener {
         ),
       );
       _initialized = true;
-    } on MissingPluginException catch (e) {
-      debugPrint('Tray nao disponivel nesta plataforma: $e');
+    } on MissingPluginException {
+      trayManager.removeListener(this);
+      _initialized = false;
     } catch (e) {
       debugPrint('Erro ao iniciar tray: $e');
     }
@@ -97,8 +98,7 @@ class AppTrayService with TrayListener {
     await trayManager.setToolTip(_normalTooltip);
   }
 
-  bool get _isSupported =>
-      !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+  bool get _isSupported => !kIsWeb && (Platform.isWindows || Platform.isMacOS);
 
   String _iconPath({bool alert = false}) {
     if (Platform.isWindows) {
