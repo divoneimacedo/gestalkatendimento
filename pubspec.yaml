@@ -29,6 +29,8 @@ dependencies:
   videosdk: 3.9.0
   videosdk_linux_shim:
     path: third_party/videosdk_linux_shim
+  local_notifier: ^0.1.6
+  ffi: ^2.2.0
 
 dev_dependencies:
   build_runner: ^2.4.13
