@@ -42,6 +42,8 @@ dev_dependencies:
 dependency_overrides:
   videosdk_webrtc:
     path: third_party/videosdk_webrtc_0_0_17
+  local_notifier:
+    path: third_party/local_notifier_windows
 
 flutter:
   uses-material-design: true

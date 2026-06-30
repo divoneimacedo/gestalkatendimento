@@ -7,8 +7,8 @@ import 'package:window_manager/window_manager.dart';
 
 class AppTrayService with TrayListener {
   static const _normalTooltip = 'Gestalk Atendimento';
-  static const _normalIcon = 'assets/icons/tray.ico';
-  static const _alertIcon = 'assets/icons/tray_alert.ico';
+  static const _normalIconBase = 'assets/icons/tray';
+  static const _alertIconBase = 'assets/icons/tray_alert';
 
   bool _initialized = false;
   int _waitingCallCount = 0;
@@ -98,13 +98,16 @@ class AppTrayService with TrayListener {
     await trayManager.setToolTip(_normalTooltip);
   }
 
-  bool get _isSupported => !kIsWeb && (Platform.isWindows || Platform.isMacOS);
+  bool get _isSupported =>
+      !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
 
   String _iconPath({bool alert = false}) {
+    final iconBase = alert ? _alertIconBase : _normalIconBase;
+
     if (Platform.isWindows) {
-      return alert ? _alertIcon : _normalIcon;
+      return '$iconBase.ico';
     }
 
-    return 'assets/icons/tray.png';
+    return '$iconBase.png';
   }
 }

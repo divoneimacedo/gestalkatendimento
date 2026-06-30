@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -61,6 +62,12 @@ class _CallScreenState extends State<CallScreen> {
     try {
       final granted = await _requestMediaPermissions();
       if (!granted) {
+        await _sendTechnicalLog(
+          event: 'media_permission_denied',
+          error: {
+            'message': 'Permissao de camera ou microfone nao concedida.',
+          },
+        );
         setState(() {
           _joining = false;
           _callError =
@@ -75,6 +82,12 @@ class _CallScreenState extends State<CallScreen> {
       final token = controller.videoSdkToken;
 
       if (call == null || call.meetingId.isEmpty) {
+        await _sendTechnicalLog(
+          event: 'call_start_error',
+          error: {
+            'message': 'Chamada sem sala VideoSDK vinculada.',
+          },
+        );
         setState(() {
           _joining = false;
           _callError = 'A chamada não possui sala VideoSDK vinculada.';
@@ -83,6 +96,14 @@ class _CallScreenState extends State<CallScreen> {
       }
 
       if (token == null || token.isEmpty) {
+        await _sendTechnicalLog(
+          event: 'call_start_error',
+          callId: call.id,
+          meetingId: call.meetingId,
+          error: {
+            'message': 'Token temporario do VideoSDK nao retornado.',
+          },
+        );
         setState(() {
           _joining = false;
           _callError = 'Não foi possível obter o token temporário do VideoSDK.';
@@ -90,13 +111,32 @@ class _CallScreenState extends State<CallScreen> {
         return;
       }
 
+      await _sendTechnicalLog(
+        callId: call.id,
+        meetingId: call.meetingId,
+        sdkState: {
+          'roomId': call.meetingId,
+          'micEnabled': _microphoneEnabled,
+          'camEnabled': _cameraEnabled,
+          'multiStream': true,
+          'mode': 'SEND_AND_RECV',
+        },
+      );
+
       _joinRoom(
         meetingId: call.meetingId,
         token: token,
         displayName:
             auth.user?.name.isNotEmpty == true ? auth.user!.name : 'Atendente',
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      await _sendTechnicalLog(
+        event: 'call_start_error',
+        error: {
+          'message': error.toString(),
+          'stack': stackTrace.toString(),
+        },
+      );
       setState(() {
         _joining = false;
         _callError = 'Não foi possível iniciar a chamada.';
@@ -111,6 +151,133 @@ class _CallScreenState extends State<CallScreen> {
     final microphone = await Permission.microphone.request();
 
     return camera.isGranted && microphone.isGranted;
+  }
+
+  Future<void> _sendTechnicalLog({
+    String event = 'call_start_snapshot',
+    String? callId,
+    String? meetingId,
+    Map<String, dynamic>? sdkState,
+    Map<String, dynamic>? error,
+  }) async {
+    try {
+      final controller = context.read<CallController>();
+      final auth = context.read<AuthController>();
+      final call = controller.currentCall;
+      final user = auth.user;
+
+      await controller.callService.sendTechnicalLog({
+        'callId': callId ?? call?.id ?? widget.callId,
+        'meetingId': meetingId ?? call?.meetingId,
+        'source': 'flutter-desktop',
+        'actorType': user?.isAdmin == true ? 'admin' : 'attendant',
+        'event': event,
+        'userId': user?.id,
+        'userName': user?.name,
+        'companySlug': widget.slug,
+        'platform': Platform.operatingSystem,
+        'os': Platform.operatingSystemVersion,
+        'permissions': await _permissionSnapshot(),
+        'mediaDevices': await _mediaDevicesSnapshot(),
+        'constraints': {
+          'audio': true,
+          'video': true,
+        },
+        'deviceInfo': await _deviceInfoSnapshot(),
+        'sdkState': sdkState,
+        'error': error,
+        'raw': {
+          'route': '/call/${widget.slug}/${widget.callId}',
+        },
+      });
+    } catch (_) {
+      // O log tecnico nao pode interromper a chamada.
+    }
+  }
+
+  Future<Map<String, dynamic>> _permissionSnapshot() async {
+    if (Platform.isLinux) {
+      return {
+        'camera': 'not_requested_on_linux',
+        'microphone': 'not_requested_on_linux',
+      };
+    }
+
+    final camera = await Permission.camera.status;
+    final microphone = await Permission.microphone.status;
+
+    return {
+      'camera': _permissionStatus(camera),
+      'microphone': _permissionStatus(microphone),
+    };
+  }
+
+  String _permissionStatus(PermissionStatus status) {
+    return status.toString().replaceFirst('PermissionStatus.', '');
+  }
+
+  Future<Map<String, dynamic>> _deviceInfoSnapshot() async {
+    final info = <String, dynamic>{
+      'executable': Platform.resolvedExecutable,
+      'localeName': Platform.localeName,
+      'numberOfProcessors': Platform.numberOfProcessors,
+      'dartVersion': Platform.version,
+    };
+
+    try {
+      info['videoSdkDeviceInfo'] = await sdk.VideoSDK.getDeviceInfo();
+    } catch (error) {
+      info['videoSdkDeviceInfoError'] = error.toString();
+    }
+
+    return info;
+  }
+
+  Future<Map<String, dynamic>> _mediaDevicesSnapshot() async {
+    final result = <String, dynamic>{};
+
+    try {
+      final videoDevices = await sdk.VideoSDK.getVideoDevices();
+      final videos = (videoDevices ?? [])
+          .map(
+            (device) => {
+              'kind': device.kind,
+              'label': device.label,
+              'hasDeviceId': device.deviceId.isNotEmpty,
+              'hasGroupId': device.groupId?.isNotEmpty == true,
+            },
+          )
+          .toList();
+
+      result['videoInputs'] = videos.length;
+      result['videoDevices'] = videos;
+    } catch (error) {
+      result['videoError'] = error.toString();
+    }
+
+    try {
+      final audioDevices = await sdk.VideoSDK.getAudioDevices();
+      final audios = (audioDevices ?? [])
+          .map(
+            (device) => {
+              'kind': device.kind,
+              'label': device.label,
+              'hasDeviceId': device.deviceId.isNotEmpty,
+              'hasGroupId': device.groupId?.isNotEmpty == true,
+            },
+          )
+          .toList();
+
+      result['audioInputs'] =
+          audios.where((device) => device['kind'] == 'audioinput').length;
+      result['audioOutputs'] =
+          audios.where((device) => device['kind'] == 'audiooutput').length;
+      result['audioDevices'] = audios;
+    } catch (error) {
+      result['audioError'] = error.toString();
+    }
+
+    return result;
   }
 
   void _joinRoom({
@@ -183,6 +350,15 @@ class _CallScreenState extends State<CallScreen> {
     });
 
     room.on(sdk.Events.error, (dynamic error) {
+      unawaited(
+        _sendTechnicalLog(
+          event: 'videosdk_error',
+          error: {
+            'message': _extractVideoSdkError(error),
+            'raw': error.toString(),
+          },
+        ),
+      );
       setState(() {
         _callError = _extractVideoSdkError(error);
         _joining = false;

@@ -31,6 +31,17 @@ class CallService {
     await apiService.dio.delete('/calls/$callId');
   }
 
+  Future<void> sendTechnicalLog(Map<String, dynamic> payload) async {
+    try {
+      await apiService.dio.post<dynamic>(
+        '/calls/technical-logs',
+        data: payload,
+      );
+    } catch (_) {
+      // O log tecnico nunca deve impedir o atendimento.
+    }
+  }
+
   Future<void> submitReview({
     required String callId,
     required int rating,
