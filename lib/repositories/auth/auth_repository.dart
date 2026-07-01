@@ -30,10 +30,10 @@ class AuthRepository {
       );
 
       final data = response.data;
-
       if (data is Map && data['error'] != null) {
+        String errorMessage = _translateLoginError(data['error'].toString());
         throw ApiException(
-          _translateLoginError(data['error'].toString()),
+          errorMessage,
           data: data,
         );
       }
@@ -75,6 +75,10 @@ class AuthRepository {
     return tokenStorage.getUser();
   }
 
+  Future<void> saveUser(User user) {
+    return tokenStorage.saveUser(user);
+  }
+
   Future<String?> getSavedSlug() {
     return tokenStorage.getSlug();
   }
@@ -84,7 +88,8 @@ class AuthRepository {
 
     if (data is Map) {
       if (data['error'] != null) {
-        return _translateLoginError(data['error'].toString());
+        String errorMessage = _translateLoginError(data['error'].toString());
+        return errorMessage;
       }
 
       if (data['message'] != null) {

@@ -11,7 +11,11 @@ class AppConfig {
   );
 
   static const String appName = 'Gestalk Atendimento - Atendentes';
-  
+  static const String appVersion = String.fromEnvironment(
+    'APP_VERSION',
+    defaultValue: '1.0.3+1',
+  );
+
   static const String defaultSlug = String.fromEnvironment(
     'GESTALK_DEFAULT_SLUG',
     defaultValue: 'gestalk',

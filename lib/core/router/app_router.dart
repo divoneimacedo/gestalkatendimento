@@ -4,13 +4,17 @@ import 'package:go_router/go_router.dart';
 import '../config/app_config.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/user.dart';
+import '../../screens/about_screen.dart';
 import '../../screens/attendances_screen.dart';
 import '../../screens/call_screen.dart';
 import '../../screens/call_review_screen.dart';
 import '../../screens/login_screen.dart';
+import '../../screens/notifications_screen.dart';
 import '../../screens/placeholder_page_screen.dart';
+import '../../screens/profile_screen.dart';
 import '../../screens/queue_screen.dart';
 import '../../screens/reports_screen.dart';
+import '../../screens/users_screen.dart';
 
 class AppRouter {
   static final rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -66,13 +70,8 @@ class AppRouter {
         ),
         GoRoute(
           path: '/users/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'users',
-            title: 'Usuários',
-            icon: Icons.people_outline,
-            description:
-                'Área de usuários do desktop. A próxima etapa é conectar a listagem paginada ao endpoint de usuários.',
+          builder: (_, state) => UsersScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
           ),
         ),
         GoRoute(
@@ -132,23 +131,20 @@ class AppRouter {
         ),
         GoRoute(
           path: '/profile/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'profile',
-            title: 'Meu Perfil',
-            icon: Icons.person_outline,
-            description: 'Área de perfil do usuário autenticado no desktop.',
+          builder: (_, state) => ProfileScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
           ),
         ),
         GoRoute(
           path: '/notifications/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'notifications',
-            title: 'Notificações',
-            icon: Icons.notifications_outlined,
-            description:
-                'Área de notificações do desktop. A rota já está no menu superior/lateral.',
+          builder: (_, state) => NotificationsScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/about/:slug',
+          builder: (_, state) => AboutScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
           ),
         ),
         GoRoute(

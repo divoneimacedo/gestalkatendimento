@@ -34,7 +34,12 @@ class NotificationService {
         linux: linux,
       );
 
-      await _plugin.initialize(settings);
+      await _plugin.initialize(
+        settings,
+        onDidReceiveNotificationResponse: (_) {
+          unawaited(_showAppWindow());
+        },
+      );
       _linuxInitialized = true;
     }
   }
@@ -43,23 +48,35 @@ class NotificationService {
     final isWindows = !kIsWeb && Platform.isWindows;
     final body = _newCallMessage(count: count, useAscii: isWindows);
 
-    if (isWindows) {
-      await _showWindowsNotification(body);
+    await showNotification(title: 'Nova chamada', body: body);
+  }
+
+  Future<void> showNotification({
+    required String title,
+    required String body,
+  }) async {
+    if (kIsWeb) return;
+
+    if (Platform.isWindows) {
+      await _showWindowsNotification(title: title, body: body);
       return;
     }
 
-    if (!kIsWeb && Platform.isLinux) {
-      await _showLinuxNotification(body);
+    if (Platform.isLinux) {
+      await _showLinuxNotification(title: title, body: body);
     }
   }
 
-  Future<void> _showWindowsNotification(String body) async {
+  Future<void> _showWindowsNotification({
+    required String title,
+    required String body,
+  }) async {
     if (!_windowsInitialized) {
       await init();
     }
 
     final notification = LocalNotification(
-      title: 'Nova chamada',
+      title: title,
       body: body,
     );
     notification.onClick = () {
@@ -69,7 +86,10 @@ class NotificationService {
     await notification.show();
   }
 
-  Future<void> _showLinuxNotification(String body) async {
+  Future<void> _showLinuxNotification({
+    required String title,
+    required String body,
+  }) async {
     if (!_linuxInitialized) {
       await init();
     }
@@ -79,7 +99,7 @@ class NotificationService {
 
     await _plugin.show(
       1,
-      'Nova chamada',
+      title,
       body,
       details,
     );

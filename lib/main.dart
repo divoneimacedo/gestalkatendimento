@@ -7,19 +7,25 @@ import 'controllers/auth_controller.dart';
 import 'controllers/call_controller.dart';
 import 'controllers/queue_controller.dart';
 import 'controllers/reports_controller.dart';
+import 'controllers/users_controller.dart';
 import 'core/config/app_config.dart';
 import 'core/config/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'repositories/auth/auth_repository.dart';
 import 'services/api/api_service.dart';
+import 'services/app_notification_service.dart';
 import 'services/attendance_service.dart';
 import 'services/call_service.dart';
+import 'services/heartbeat_service.dart';
 import 'services/notification_service.dart';
+import 'services/profile_service.dart';
 import 'services/queue_service.dart';
 import 'services/report_service.dart';
 import 'services/sound_service.dart';
 import 'services/storage/token_storage.dart';
 import 'services/tray_service.dart';
+import 'services/users_service.dart';
+import 'widgets/app_notification_monitor.dart';
 import 'widgets/call_alert_monitor.dart';
 
 final _trayService = AppTrayService();
@@ -55,6 +61,9 @@ Future<void> main() async {
 
   final storage = TokenStorage();
   final apiService = ApiService(tokenStorage: storage);
+  final heartbeatService = HeartbeatService(apiService);
+  final appNotificationService = AppNotificationService(apiService);
+  final profileService = ProfileService(apiService);
   final authController = AuthController(
     AuthRepository(
       apiService: apiService,
@@ -85,6 +94,13 @@ Future<void> main() async {
       reportsController: ReportsController(
         reportService: ReportService(apiService),
       ),
+      usersController: UsersController(
+        usersService: UsersService(apiService),
+      ),
+      heartbeatService: heartbeatService,
+      appNotificationService: appNotificationService,
+      notificationService: notificationService,
+      profileService: profileService,
       initialSlug: savedSlug,
     ),
   );
@@ -105,6 +121,11 @@ class GestalkApp extends StatelessWidget {
   final AttendancesController attendancesController;
   final CallController callController;
   final ReportsController reportsController;
+  final UsersController usersController;
+  final HeartbeatService heartbeatService;
+  final AppNotificationService appNotificationService;
+  final NotificationService notificationService;
+  final ProfileService profileService;
   final String? initialSlug;
 
   GestalkApp({
@@ -114,6 +135,11 @@ class GestalkApp extends StatelessWidget {
     required this.attendancesController,
     required this.callController,
     required this.reportsController,
+    required this.usersController,
+    required this.heartbeatService,
+    required this.appNotificationService,
+    required this.notificationService,
+    required this.profileService,
     this.initialSlug,
   });
 
@@ -131,6 +157,11 @@ class GestalkApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: attendancesController),
         ChangeNotifierProvider.value(value: callController),
         ChangeNotifierProvider.value(value: reportsController),
+        ChangeNotifierProvider.value(value: usersController),
+        Provider<HeartbeatService>.value(value: heartbeatService),
+        ChangeNotifierProvider.value(value: appNotificationService),
+        Provider<NotificationService>.value(value: notificationService),
+        Provider<ProfileService>.value(value: profileService),
         Provider<AppTrayService>.value(value: _trayService),
       ],
       child: MaterialApp.router(
@@ -138,8 +169,10 @@ class GestalkApp extends StatelessWidget {
         theme: AppTheme.light(),
         routerConfig: _router,
         debugShowCheckedModeBanner: false,
-        builder: (context, child) => CallAlertMonitor(
-          child: child ?? const SizedBox.shrink(),
+        builder: (context, child) => AppNotificationMonitor(
+          child: CallAlertMonitor(
+            child: child ?? const SizedBox.shrink(),
+          ),
         ),
       ),
     );

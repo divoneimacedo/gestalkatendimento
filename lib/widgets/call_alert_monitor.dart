@@ -66,14 +66,17 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
   }
 
   void _stopMonitor() {
+    final wasRunning =
+        _timer != null || _activeSlug != null || _knownCallIds.isNotEmpty;
+
     _timer?.cancel();
     _timer = null;
     _activeSlug = null;
     _firstCheck = true;
     _knownCallIds = {};
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    if (mounted && wasRunning) {
+      _hideSnackBarSafely();
       unawaited(context.read<AppTrayService>().clearWaitingCalls());
     }
   }
@@ -104,12 +107,12 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
         await queue.soundService.stop();
         await tray.clearWaitingCalls();
         if (mounted) {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          _hideSnackBarSafely();
         }
       }
 
       if (removedCallIds.isNotEmpty && mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        _hideSnackBarSafely();
       }
 
       if (shouldAlert && !isInCallRoute) {
@@ -182,6 +185,13 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
     final routerContext = AppRouter.rootNavigatorKey.currentContext;
     if (routerContext == null) return;
     GoRouter.of(routerContext).go('/queue/$slug');
+  }
+
+  void _hideSnackBarSafely() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    });
   }
 
   bool _isInCallRoute() {

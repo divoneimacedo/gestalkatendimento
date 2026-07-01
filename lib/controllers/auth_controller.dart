@@ -70,4 +70,10 @@ class AuthController extends ChangeNotifier {
     slug = null;
     notifyListeners();
   }
+
+  Future<void> updateStoredUser(User nextUser) async {
+    user = nextUser;
+    await repository.saveUser(nextUser);
+    notifyListeners();
+  }
 }

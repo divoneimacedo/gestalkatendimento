@@ -2,6 +2,10 @@
 
 part of 'attendance_call.dart';
 
+// **************************************************************************
+// JsonSerializableGenerator
+// **************************************************************************
+
 AttendanceCall _$AttendanceCallFromJson(Map<String, dynamic> json) =>
     AttendanceCall(
       id: _stringFromJson(json['id']),

@@ -29,6 +29,8 @@ class AttendanceService {
     String? slug,
     int page = 1,
     int limit = 25,
+    String status = 'ALL',
+    String search = '',
   }) async {
     final endpoint = slug == null || slug.isEmpty || slug == 'gestalk'
         ? '/calls'
@@ -40,6 +42,8 @@ class AttendanceService {
         queryParameters: {
           'page': page,
           'limit': limit,
+          if (status != 'ALL') 'status': status,
+          if (search.trim().isNotEmpty) 'search': search.trim(),
         },
       );
       final data = response.data;

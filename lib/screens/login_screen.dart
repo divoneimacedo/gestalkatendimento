@@ -141,7 +141,7 @@ class _LoginHero extends StatelessWidget {
   }
 }
 
-class _LoginCard extends StatelessWidget {
+class _LoginCard extends StatefulWidget {
   const _LoginCard({
     required this.formKey,
     required this.slugController,
@@ -157,6 +157,13 @@ class _LoginCard extends StatelessWidget {
   final AuthController auth;
 
   @override
+  State<_LoginCard> createState() => _LoginCardState();
+}
+
+class _LoginCardState extends State<_LoginCard> {
+  bool _showPassword = false;
+
+  @override
   Widget build(BuildContext context) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 420),
@@ -166,7 +173,7 @@ class _LoginCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Form(
-            key: formKey,
+            key: widget.formKey,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -177,7 +184,7 @@ class _LoginCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
                 TextFormField(
-                  controller: slugController,
+                  controller: widget.slugController,
                   decoration:
                       const InputDecoration(labelText: 'Empresa / slug'),
                   validator: (v) =>
@@ -185,58 +192,64 @@ class _LoginCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
-                  controller: userNameController,
+                  controller: widget.userNameController,
                   decoration: const InputDecoration(labelText: 'Usuário'),
                   validator: (v) =>
                       v == null || v.isEmpty ? 'Informe o usuário' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Senha'),
+                  controller: widget.passwordController,
+                  obscureText: !_showPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Senha',
+                    suffixIcon: IconButton(
+                      tooltip:
+                          _showPassword ? 'Ocultar senha' : 'Mostrar senha',
+                      onPressed: () {
+                        setState(() => _showPassword = !_showPassword);
+                      },
+                      icon: Icon(
+                        _showPassword
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                    ),
+                  ),
                   validator: (v) =>
                       v == null || v.isEmpty ? 'Informe a senha' : null,
                 ),
                 const SizedBox(height: 20),
                 FilledButton(
-                  onPressed: auth.loading
+                  onPressed: widget.auth.loading
                       ? null
                       : () async {
-                          if (!formKey.currentState!.validate()) return;
+                          if (!widget.formKey.currentState!.validate()) return;
 
-                          await auth.signIn(
-                            userName: userNameController.text,
-                            password: passwordController.text,
-                            slug: slugController.text,
+                          await widget.auth.signIn(
+                            userName: widget.userNameController.text,
+                            password: widget.passwordController.text,
+                            slug: widget.slugController.text,
                           );
 
                           if (!context.mounted) return;
 
-                          if (auth.isAuthenticated) {
+                          if (widget.auth.isAuthenticated) {
                             context.go(
                               AppRouter.defaultLocationForUser(
-                                auth.user,
-                                slugController.text,
+                                widget.auth.user,
+                                widget.slugController.text,
                               ),
                             );
                             return;
                           }
 
-                          final error = auth.error;
+                          final error = widget.auth.error;
                           if (error != null && error.isNotEmpty) {
-                            ScaffoldMessenger.of(context)
-                              ..hideCurrentSnackBar()
-                              ..showSnackBar(
-                                SnackBar(
-                                  content: Text(error),
-                                  behavior: SnackBarBehavior.floating,
-                                  backgroundColor: AppTheme.danger,
-                                ),
-                              );
+                            _showLoginError(error);
                           }
                         },
-                  child: auth.loading
+                  child: widget.auth.loading
                       ? const SizedBox(
                           width: 20,
                           height: 20,
@@ -250,5 +263,28 @@ class _LoginCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  void _showLoginError(String message) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white),
+                const SizedBox(width: 10),
+                Expanded(child: Text(message)),
+              ],
+            ),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppTheme.danger,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+    });
   }
 }
