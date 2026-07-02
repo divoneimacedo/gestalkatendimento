@@ -44,18 +44,6 @@ Future<void> main() async {
 
   if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
     await windowManager.ensureInitialized();
-    await windowManager.waitUntilReadyToShow(
-      const WindowOptions(
-        size: Size(1200, 800),
-        minimumSize: Size(900, 600),
-        center: true,
-      ),
-      () async {
-        await windowManager.show();
-        await windowManager.maximize();
-        await windowManager.focus();
-      },
-    );
 
     if (Platform.isWindows || Platform.isMacOS) {
       windowManager.setPreventClose(true);
@@ -132,6 +120,21 @@ Future<void> main() async {
       initialSlug: savedSlug,
     ),
   );
+
+  if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+    await windowManager.waitUntilReadyToShow(
+      const WindowOptions(
+        size: Size(1200, 800),
+        minimumSize: Size(900, 600),
+        center: true,
+      ),
+      () async {
+        await windowManager.show();
+        await windowManager.maximize();
+        await windowManager.focus();
+      },
+    );
+  }
 }
 
 class _WindowCloseHandler with WindowListener {
