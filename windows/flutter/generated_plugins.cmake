@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
+  file_selector_windows
   local_notifier
   permission_handler_windows
   printing

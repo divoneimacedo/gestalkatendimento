@@ -13,12 +13,17 @@ class AppConfig {
   static const String appName = 'Gestalk Atendimento - Atendentes';
   static const String appVersion = String.fromEnvironment(
     'APP_VERSION',
-    defaultValue: '1.0.3+1',
+    defaultValue: '1.0.4+1',
   );
 
   static const String defaultSlug = String.fromEnvironment(
     'GESTALK_DEFAULT_SLUG',
     defaultValue: 'gestalk',
+  );
+
+  static const String loginCompaniesToken = String.fromEnvironment(
+    'LOGIN_COMPANIES_TOKEN',
+    defaultValue: '',
   );
 
   // Endpoint opcional no backend para gerar token do VideoSDK.
@@ -52,6 +57,17 @@ class AppConfig {
         return 'https://api.gestalkconecta.com.br';
       case Environment.homolog:
         return 'https://api-hml.gestalkconecta.com.br';
+      case Environment.development:
+        return 'http://localhost:3000';
+    }
+  }
+
+  static String get frontendUrl {
+    switch (environment) {
+      case Environment.production:
+        return 'https://atendimento.gestalkconecta.com.br';
+      case Environment.homolog:
+        return 'https://front-staging.gestalkconecta.com.br';
       case Environment.development:
         return 'http://localhost:3000';
     }

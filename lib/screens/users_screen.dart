@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../controllers/auth_controller.dart';
@@ -7,12 +8,15 @@ import '../core/config/app_theme.dart';
 import '../core/exceptions/api_exception.dart';
 import '../models/managed_user.dart';
 import '../widgets/app_shell.dart';
+import '../widgets/app_overflow_tooltip_text.dart';
+import '../widgets/app_pagination_controls.dart';
 import '../widgets/shimmer_loading.dart';
 
 class UsersScreen extends StatefulWidget {
   final String slug;
+  final String? companyId;
 
-  const UsersScreen({super.key, required this.slug});
+  const UsersScreen({super.key, required this.slug, this.companyId});
 
   @override
   State<UsersScreen> createState() => _UsersScreenState();
@@ -23,7 +27,11 @@ class _UsersScreenState extends State<UsersScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<UsersController>().load(slug: widget.slug, resetPage: true);
+      context.read<UsersController>().load(
+            slug: widget.slug,
+            companyId: widget.companyId,
+            resetPage: true,
+          );
     });
   }
 
@@ -42,7 +50,10 @@ class _UsersScreenState extends State<UsersScreen> {
           tooltip: 'Atualizar',
           onPressed: controller.loading
               ? null
-              : () => controller.refresh(slug: widget.slug),
+              : () => controller.refresh(
+                    slug: widget.slug,
+                    companyId: widget.companyId,
+                  ),
           icon: const Icon(Icons.refresh),
         ),
       ],
@@ -52,6 +63,7 @@ class _UsersScreenState extends State<UsersScreen> {
           _UsersToolbar(
             controller: controller,
             slug: widget.slug,
+            companyId: widget.companyId,
             isAdmin: isAdmin,
           ),
           const SizedBox(height: 14),
@@ -75,7 +87,8 @@ class _UsersScreenState extends State<UsersScreen> {
                       isAdmin: isAdmin,
                       onNotify: _openNotificationDialog,
                       onToggleBlock: _confirmToggleBlock,
-                      onEdit: _openEditDialog,
+                      onEdit: (user) =>
+                          context.go('/users/${widget.slug}/${user.id}/edit'),
                       onDelete: _confirmDelete,
                     ),
                   if (controller.loading && controller.users.isNotEmpty)
@@ -90,7 +103,29 @@ class _UsersScreenState extends State<UsersScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          _Pagination(controller: controller, slug: widget.slug),
+          AppPaginationControls(
+            page: controller.page,
+            totalPages: controller.totalPages,
+            total: controller.total,
+            canGoPrevious: controller.canGoPrevious,
+            canGoNext: controller.canGoNext,
+            onFirst: () => controller.firstPage(
+              slug: widget.slug,
+              companyId: widget.companyId,
+            ),
+            onPrevious: () => controller.previousPage(
+              slug: widget.slug,
+              companyId: widget.companyId,
+            ),
+            onNext: () => controller.nextPage(
+              slug: widget.slug,
+              companyId: widget.companyId,
+            ),
+            onLast: () => controller.lastPage(
+              slug: widget.slug,
+              companyId: widget.companyId,
+            ),
+          ),
         ],
       ),
     );
@@ -159,124 +194,6 @@ class _UsersScreenState extends State<UsersScreen> {
       _showSnack(error.message, isError: true);
     } catch (_) {
       _showSnack('Erro ao enviar notificação.', isError: true);
-    }
-  }
-
-  Future<void> _openEditDialog(ManagedUser user) async {
-    final nameController = TextEditingController(text: user.name);
-    final emailController = TextEditingController(text: user.email);
-    final usernameController = TextEditingController(text: user.username);
-    final phoneController = TextEditingController(text: user.phoneNumber);
-    final formKey = GlobalKey<FormState>();
-
-    final edited = await showDialog<ManagedUser>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Editar usuário'),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: Form(
-              key: formKey,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: nameController,
-                            decoration:
-                                const InputDecoration(labelText: 'Nome'),
-                            validator: _required('Informe o nome.'),
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: TextFormField(
-                            controller: usernameController,
-                            decoration:
-                                const InputDecoration(labelText: 'Apelido'),
-                            validator: _required('Informe o apelido.'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration:
-                                const InputDecoration(labelText: 'E-mail'),
-                            validator: _emailValidator,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: TextFormField(
-                            controller: phoneController,
-                            keyboardType: TextInputType.phone,
-                            decoration:
-                                const InputDecoration(labelText: 'Telefone'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _UserSummary(user: user),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton.icon(
-              onPressed: () {
-                final form = formKey.currentState;
-                if (form == null || !form.validate()) return;
-
-                Navigator.of(dialogContext).pop(
-                  user.copyWith(
-                    name: nameController.text.trim(),
-                    username: usernameController.text.trim(),
-                    email: emailController.text.trim(),
-                    phoneNumber: phoneController.text.trim(),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Salvar'),
-            ),
-          ],
-        );
-      },
-    );
-
-    nameController.dispose();
-    emailController.dispose();
-    usernameController.dispose();
-    phoneController.dispose();
-
-    if (edited == null || !mounted) return;
-
-    try {
-      await context.read<UsersController>().updateUser(
-            slug: widget.slug,
-            user: edited,
-          );
-      _showSnack('Usuário atualizado com sucesso.');
-    } on ApiException catch (error) {
-      _showSnack(error.message, isError: true);
-    } catch (_) {
-      _showSnack('Erro ao atualizar usuário.', isError: true);
     }
   }
 
@@ -378,11 +295,13 @@ class _UsersScreenState extends State<UsersScreen> {
 class _UsersToolbar extends StatefulWidget {
   final UsersController controller;
   final String slug;
+  final String? companyId;
   final bool isAdmin;
 
   const _UsersToolbar({
     required this.controller,
     required this.slug,
+    required this.companyId,
     required this.isAdmin,
   });
 
@@ -417,6 +336,8 @@ class _UsersToolbarState extends State<_UsersToolbar> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
+    final isCompanyMode =
+        widget.companyId != null && widget.companyId!.isNotEmpty;
     return Wrap(
       alignment: WrapAlignment.spaceBetween,
       crossAxisAlignment: WrapCrossAlignment.center,
@@ -434,16 +355,25 @@ class _UsersToolbarState extends State<_UsersToolbar> {
           width: 360,
           child: TextField(
             controller: _searchController,
-            enabled: !controller.loading,
+            enabled: !controller.loading && !isCompanyMode,
             onChanged: (value) => controller.setSearchTerm(
               slug: widget.slug,
               value: value,
+              companyId: widget.companyId,
             ),
             decoration: InputDecoration(
               filled: true,
               fillColor: Colors.white,
               isDense: true,
               prefixIcon: const Icon(Icons.search),
+              labelStyle: const TextStyle(color: Color(0xFF263238)),
+              floatingLabelStyle: const TextStyle(
+                color: AppTheme.primary,
+                fontWeight: FontWeight.w800,
+              ),
+              focusedBorder: const OutlineInputBorder(
+                borderSide: BorderSide(color: AppTheme.primary, width: 2),
+              ),
               suffixIcon: controller.searchTerm.isEmpty
                   ? null
                   : IconButton(
@@ -453,6 +383,7 @@ class _UsersToolbarState extends State<_UsersToolbar> {
                         controller.setSearchTerm(
                           slug: widget.slug,
                           value: '',
+                          companyId: widget.companyId,
                         );
                       },
                       icon: const Icon(Icons.close),
@@ -466,12 +397,19 @@ class _UsersToolbarState extends State<_UsersToolbar> {
             selected: controller.showBlockedOnly,
             label: const Text('Apenas bloqueados/desativados'),
             avatar: const Icon(Icons.lock_outline, size: 18),
-            onSelected: controller.loading
+            onSelected: controller.loading || isCompanyMode
                 ? null
                 : (value) => controller.setBlockedOnly(
                       slug: widget.slug,
                       value: value,
+                      companyId: widget.companyId,
                     ),
+          ),
+        if (isCompanyMode)
+          OutlinedButton.icon(
+            onPressed: () => context.go('/companies/${widget.slug}'),
+            icon: const Icon(Icons.arrow_back),
+            label: const Text('Voltar'),
           ),
       ],
     );
@@ -481,15 +419,15 @@ class _UsersToolbarState extends State<_UsersToolbar> {
 class _UsersTable extends StatefulWidget {
   static const rowHeight = 58.0;
   static const headerHeight = 48.0;
-  static const actionsWidth = 210.0;
+  static const actionsWidth = 180.0;
   static const columns = [
-    _ColumnSpec('ID', 92),
-    _ColumnSpec('Empresa', 210),
-    _ColumnSpec('Nome', 220),
-    _ColumnSpec('Apelido', 150),
-    _ColumnSpec('E-mail', 260),
-    _ColumnSpec('Perfil', 160),
-    _ColumnSpec('Status', 150),
+    _ColumnSpec('ID', 80),
+    _ColumnSpec('Empresa', 130, flexGrow: 0.2),
+    _ColumnSpec('Nome', 140, flexGrow: 0.25),
+    _ColumnSpec('Apelido', 100, flexGrow: 0.1),
+    _ColumnSpec('E-mail', 180, flexGrow: 0.3),
+    _ColumnSpec('Perfil', 100, flexGrow: 0.15),
+    _ColumnSpec('Status', 130),
   ];
 
   final List<ManagedUser> users;
@@ -584,18 +522,43 @@ class _UsersTableState extends State<_UsersTable> {
     return offset.clamp(0.0, max);
   }
 
+  List<_ColumnSpec> _resolveColumns(double viewportWidth) {
+    final baseWidth = _UsersTable.columns.fold<double>(
+      0,
+      (sum, column) => sum + column.width,
+    );
+    final extraWidth =
+        viewportWidth > baseWidth ? viewportWidth - baseWidth : 0;
+    final totalFlex = _UsersTable.columns.fold<double>(
+      0,
+      (sum, column) => sum + column.flexGrow,
+    );
+
+    return _UsersTable.columns
+        .map(
+          (column) => column.copyWith(
+            width: column.width +
+                (totalFlex > 0
+                    ? extraWidth * (column.flexGrow / totalFlex)
+                    : 0),
+          ),
+        )
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final leftMinWidth = _UsersTable.columns.fold<double>(
-          0,
-          (sum, column) => sum + column.width,
-        );
         final reservedActionsWidth =
             widget.isAdmin ? _UsersTable.actionsWidth : 0.0;
         final leftViewportWidth =
             (constraints.maxWidth - reservedActionsWidth).clamp(280.0, 9999.0);
+        final resolvedColumns = _resolveColumns(leftViewportWidth);
+        final tableWidth = resolvedColumns.fold<double>(
+          0,
+          (sum, column) => sum + column.width,
+        );
 
         return Column(
           children: [
@@ -608,8 +571,8 @@ class _UsersTableState extends State<_UsersTable> {
                     controller: _headerHorizontalController,
                     scrollDirection: Axis.horizontal,
                     child: SizedBox(
-                      width: leftMinWidth,
-                      child: const _HeaderRow(columns: _UsersTable.columns),
+                      width: tableWidth,
+                      child: _HeaderRow(columns: resolvedColumns),
                     ),
                   ),
                 ),
@@ -630,7 +593,7 @@ class _UsersTableState extends State<_UsersTable> {
                       controller: _bodyHorizontalController,
                       scrollDirection: Axis.horizontal,
                       child: SizedBox(
-                        width: leftMinWidth,
+                        width: tableWidth,
                         child: ListView.builder(
                           controller: _bodyVerticalController,
                           itemCount: widget.users.length,
@@ -638,7 +601,7 @@ class _UsersTableState extends State<_UsersTable> {
                             return _DataRow(
                               user: widget.users[index],
                               index: index,
-                              columns: _UsersTable.columns,
+                              columns: resolvedColumns,
                             );
                           },
                         ),
@@ -676,8 +639,17 @@ class _UsersTableState extends State<_UsersTable> {
 class _ColumnSpec {
   final String title;
   final double width;
+  final double flexGrow;
 
-  const _ColumnSpec(this.title, this.width);
+  const _ColumnSpec(this.title, this.width, {this.flexGrow = 0});
+
+  _ColumnSpec copyWith({double? width}) {
+    return _ColumnSpec(
+      title,
+      width ?? this.width,
+      flexGrow: flexGrow,
+    );
+  }
 }
 
 class _HeaderRow extends StatelessWidget {
@@ -754,10 +726,9 @@ class _DataRow extends StatelessWidget {
               width: columns[i].width,
               child: i == 6
                   ? _StatusBadge(blocked: user.isBlock || user.isInative)
-                  : Text(
+                  : AppOverflowTooltipText(
                       values[i],
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      tooltip: i == 0 ? user.id : values[i],
                     ),
             ),
         ],
@@ -894,71 +865,6 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-class _Pagination extends StatelessWidget {
-  final UsersController controller;
-  final String slug;
-
-  const _Pagination({
-    required this.controller,
-    required this.slug,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      runSpacing: 8,
-      children: [
-        Text(
-          'Página ${controller.page} de ${controller.totalPages} | Total: ${controller.total}',
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Primeira página',
-              onPressed: controller.canGoPrevious
-                  ? () => controller.firstPage(slug: slug)
-                  : null,
-              icon: const Icon(Icons.first_page),
-              color: Colors.white,
-            ),
-            IconButton(
-              tooltip: 'Página anterior',
-              onPressed: controller.canGoPrevious
-                  ? () => controller.previousPage(slug: slug)
-                  : null,
-              icon: const Icon(Icons.chevron_left),
-              color: Colors.white,
-            ),
-            IconButton(
-              tooltip: 'Próxima página',
-              onPressed: controller.canGoNext
-                  ? () => controller.nextPage(slug: slug)
-                  : null,
-              icon: const Icon(Icons.chevron_right),
-              color: Colors.white,
-            ),
-            IconButton(
-              tooltip: 'Última página',
-              onPressed: controller.canGoNext
-                  ? () => controller.lastPage(slug: slug)
-                  : null,
-              icon: const Icon(Icons.last_page),
-              color: Colors.white,
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
 class _UserSummary extends StatelessWidget {
   final ManagedUser user;
 
@@ -1000,21 +906,6 @@ class _ErrorBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-String? Function(String?) _required(String message) {
-  return (value) {
-    if (value == null || value.trim().isEmpty) return message;
-    return null;
-  };
-}
-
-String? _emailValidator(String? value) {
-  final text = value?.trim() ?? '';
-  if (text.isEmpty) return 'Informe o e-mail.';
-  final valid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
-  if (!valid) return 'Informe um e-mail válido.';
-  return null;
 }
 
 String _shortId(String id) {

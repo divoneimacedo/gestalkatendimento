@@ -10,7 +10,10 @@ class AuthController extends ChangeNotifier {
   User? user;
   String? slug;
   bool loading = false;
+  bool loadingCompanies = false;
   String? error;
+  String? companiesError;
+  List<LoginCompanyOption> loginCompanies = const [];
 
   AuthController(this.repository);
 
@@ -35,6 +38,24 @@ class AuthController extends ChangeNotifier {
 
   Future<String?> getSavedSlug() {
     return repository.getSavedSlug();
+  }
+
+  Future<void> loadLoginCompanies() async {
+    loadingCompanies = true;
+    companiesError = null;
+    notifyListeners();
+
+    try {
+      loginCompanies = await repository.fetchLoginCompanies();
+    } on ApiException catch (e) {
+      companiesError = e.message;
+    } catch (e) {
+      companiesError = 'Erro inesperado ao buscar empresas.';
+      debugPrint('ERRO GERAL BUSCAR EMPRESAS LOGIN: $e');
+    } finally {
+      loadingCompanies = false;
+      notifyListeners();
+    }
   }
 
   Future<void> signIn({

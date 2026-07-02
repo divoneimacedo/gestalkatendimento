@@ -28,6 +28,7 @@ class UsersController extends ChangeNotifier {
 
   Future<void> load({
     required String slug,
+    String? companyId,
     bool resetPage = false,
   }) async {
     if (resetPage) page = 1;
@@ -42,7 +43,8 @@ class UsersController extends ChangeNotifier {
         blockedOnly: showBlockedOnly,
         page: page,
         limit: limit,
-        search: searchTerm,
+        search: companyId == null || companyId.isEmpty ? searchTerm : '',
+        companyId: companyId,
       );
 
       users = result.users;
@@ -60,26 +62,28 @@ class UsersController extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh({required String slug}) {
-    return load(slug: slug);
+  Future<void> refresh({required String slug, String? companyId}) {
+    return load(slug: slug, companyId: companyId);
   }
 
   Future<void> setBlockedOnly({
     required String slug,
     required bool value,
+    String? companyId,
   }) async {
     showBlockedOnly = value;
-    await load(slug: slug, resetPage: true);
+    await load(slug: slug, companyId: companyId, resetPage: true);
   }
 
   void setSearchTerm({
     required String slug,
     required String value,
+    String? companyId,
   }) {
     searchTerm = value;
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 450), () {
-      load(slug: slug, resetPage: true);
+      load(slug: slug, companyId: companyId, resetPage: true);
     });
     notifyListeners();
   }
@@ -90,28 +94,28 @@ class UsersController extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> nextPage({required String slug}) async {
+  Future<void> nextPage({required String slug, String? companyId}) async {
     if (!canGoNext) return;
     page += 1;
-    await load(slug: slug);
+    await load(slug: slug, companyId: companyId);
   }
 
-  Future<void> previousPage({required String slug}) async {
+  Future<void> previousPage({required String slug, String? companyId}) async {
     if (!canGoPrevious) return;
     page -= 1;
-    await load(slug: slug);
+    await load(slug: slug, companyId: companyId);
   }
 
-  Future<void> firstPage({required String slug}) async {
+  Future<void> firstPage({required String slug, String? companyId}) async {
     if (page == 1 || loading) return;
     page = 1;
-    await load(slug: slug);
+    await load(slug: slug, companyId: companyId);
   }
 
-  Future<void> lastPage({required String slug}) async {
+  Future<void> lastPage({required String slug, String? companyId}) async {
     if (page == totalPages || loading) return;
     page = totalPages;
-    await load(slug: slug);
+    await load(slug: slug, companyId: companyId);
   }
 
   Future<void> updateUser({

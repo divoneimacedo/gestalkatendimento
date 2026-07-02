@@ -1,9 +1,20 @@
 import 'package:dio/dio.dart';
 
+import '../../core/config/app_config.dart';
 import '../../core/exceptions/api_exception.dart';
 import '../../models/user.dart';
 import '../../services/api/api_service.dart';
 import '../../services/storage/token_storage.dart';
+
+class LoginCompanyOption {
+  final String name;
+  final String slug;
+
+  const LoginCompanyOption({
+    required this.name,
+    required this.slug,
+  });
+}
 
 class AuthRepository {
   final ApiService apiService;
@@ -58,6 +69,55 @@ class AuthRepository {
       await tokenStorage.saveUser(user);
 
       return user;
+    } on DioException catch (e) {
+      throw ApiException(
+        _extractDioErrorMessage(e),
+        statusCode: e.response?.statusCode,
+        data: e.response?.data,
+      );
+    }
+  }
+
+  Future<List<LoginCompanyOption>> fetchLoginCompanies() async {
+    try {
+      final appToken = AppConfig.loginCompaniesToken.trim();
+      if (appToken.isEmpty) {
+        throw ApiException(
+          'Token de listagem de empresas não configurado no app. Defina LOGIN_COMPANIES_TOKEN.',
+        );
+      }
+
+      final response = await apiService.dio.get<dynamic>(
+        '/company/public/login-companies',
+        options: Options(
+          headers: {
+            'x-app-token': appToken,
+          },
+        ),
+      );
+
+      final data = response.data;
+      final rawCompanies = data is Map ? data['companies'] : null;
+
+      if (rawCompanies is! List) return [];
+
+      final options = rawCompanies
+          .whereType<Map>()
+          .map((company) {
+            final name = company['name']?.toString() ?? '';
+            final slug = company['slug']?.toString() ?? '';
+
+            if (name.isEmpty || slug.isEmpty) return null;
+
+            return LoginCompanyOption(name: name, slug: slug);
+          })
+          .whereType<LoginCompanyOption>()
+          .toList();
+
+      options.sort((a, b) => a.name.compareTo(b.name));
+      return options;
+    } on ApiException {
+      rethrow;
     } on DioException catch (e) {
       throw ApiException(
         _extractDioErrorMessage(e),

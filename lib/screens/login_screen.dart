@@ -28,6 +28,14 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AuthController>().loadLoginCompanies();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
 
@@ -164,7 +172,35 @@ class _LoginCardState extends State<_LoginCard> {
   bool _showPassword = false;
 
   @override
+  void didUpdateWidget(covariant _LoginCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _ensureSelectedCompany();
+  }
+
+  void _ensureSelectedCompany() {
+    final options = widget.auth.loginCompanies;
+    if (options.isEmpty) return;
+
+    final currentSlug = widget.slugController.text;
+    final hasCurrent = options.any((company) => company.slug == currentSlug);
+    if (hasCurrent) return;
+
+    final defaultMatch = options.where(
+      (company) => company.slug == AppConfig.defaultSlug,
+    );
+    final nextSlug =
+        defaultMatch.isNotEmpty ? defaultMatch.first.slug : options.first.slug;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.slugController.text = nextSlug;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    _ensureSelectedCompany();
+
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 420),
       child: Card(
@@ -183,13 +219,7 @@ class _LoginCardState extends State<_LoginCard> {
                   style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 24),
-                TextFormField(
-                  controller: widget.slugController,
-                  decoration:
-                      const InputDecoration(labelText: 'Empresa / slug'),
-                  validator: (v) =>
-                      v == null || v.isEmpty ? 'Informe o slug' : null,
-                ),
+                _companyField(),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: widget.userNameController,
@@ -286,5 +316,90 @@ class _LoginCardState extends State<_LoginCard> {
           ),
         );
     });
+  }
+
+  Widget _companyField() {
+    final auth = widget.auth;
+    final companies = auth.loginCompanies;
+    final currentSlug = widget.slugController.text;
+    final hasCurrent = companies.any((company) => company.slug == currentSlug);
+    final defaultMatch = companies.where(
+      (company) => company.slug == AppConfig.defaultSlug,
+    );
+    final selectedSlug = hasCurrent
+        ? currentSlug
+        : defaultMatch.isNotEmpty
+            ? defaultMatch.first.slug
+            : companies.isNotEmpty
+                ? companies.first.slug
+                : null;
+
+    if (selectedSlug != null && widget.slugController.text != selectedSlug) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        widget.slugController.text = selectedSlug;
+      });
+    }
+
+    if (auth.loadingCompanies) {
+      return const InputDecorator(
+        decoration: InputDecoration(labelText: 'Empresa'),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Text('Carregando empresas...'),
+          ],
+        ),
+      );
+    }
+    if (companies.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: widget.slugController,
+            decoration: const InputDecoration(labelText: 'Empresa / slug'),
+            validator: (v) => v == null || v.isEmpty ? 'Informe o slug' : null,
+          ),
+          if (auth.companiesError != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              auth.companiesError!,
+              style: const TextStyle(color: AppTheme.danger, fontSize: 12),
+            ),
+          ],
+        ],
+      );
+    }
+
+    return DropdownButtonFormField<String>(
+      initialValue: selectedSlug,
+      isExpanded: true,
+      decoration: const InputDecoration(labelText: 'Empresa'),
+      items: companies
+          .map(
+            (company) => DropdownMenuItem<String>(
+              value: company.slug,
+              child: Text(
+                company.name,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: widget.auth.loading
+          ? null
+          : (value) {
+              if (value == null) return;
+              widget.slugController.text = value;
+            },
+      validator: (value) =>
+          value == null || value.isEmpty ? 'Selecione a empresa' : null,
+    );
   }
 }

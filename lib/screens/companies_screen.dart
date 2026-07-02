@@ -1,91 +1,97 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../controllers/attendances_controller.dart';
-import '../controllers/auth_controller.dart';
+import '../controllers/companies_controller.dart';
 import '../core/config/app_theme.dart';
-import '../models/attendance_call.dart';
-import '../widgets/app_shell.dart';
+import '../models/company.dart';
 import '../widgets/app_overflow_tooltip_text.dart';
 import '../widgets/app_pagination_controls.dart';
+import '../widgets/app_shell.dart';
 import '../widgets/shimmer_loading.dart';
 
-class AttendancesScreen extends StatefulWidget {
+class CompaniesScreen extends StatefulWidget {
   final String slug;
 
-  const AttendancesScreen({super.key, required this.slug});
+  const CompaniesScreen({super.key, required this.slug});
 
   @override
-  State<AttendancesScreen> createState() => _AttendancesScreenState();
+  State<CompaniesScreen> createState() => _CompaniesScreenState();
 }
 
-class _AttendancesScreenState extends State<AttendancesScreen> {
+class _CompaniesScreenState extends State<CompaniesScreen> {
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AttendancesController>().load(slug: widget.slug);
+      context.read<CompaniesController>().load(
+            slug: widget.slug,
+            resetPage: true,
+          );
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final controller = context.watch<AttendancesController>();
-    final isAdmin = context.watch<AuthController>().user?.isAdmin ?? false;
+    final controller = context.watch<CompaniesController>();
+    final canCreate = widget.slug == 'gestalk';
 
     return AppShell(
-      title: 'Atendimentos',
+      title: 'Empresas',
       slug: widget.slug,
-      currentRoute: 'attendances',
+      currentRoute: 'companies',
       actions: [
         IconButton(
           tooltip: 'Atualizar',
-          onPressed: () => controller.refresh(slug: widget.slug),
+          onPressed: controller.loading
+              ? null
+              : () => controller.refresh(slug: widget.slug),
           icon: const Icon(Icons.refresh),
         ),
       ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (controller.error != null)
-            Card(
-              color: Colors.red.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  controller.error!,
-                  style: const TextStyle(color: Colors.red),
-                ),
-              ),
-            ),
-          _AttendancesToolbar(
+          _CompaniesToolbar(
             controller: controller,
             slug: widget.slug,
+            canCreate: canCreate,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
+          if (controller.error != null) ...[
+            _ErrorBanner(controller.error!),
+            const SizedBox(height: 12),
+          ],
           Expanded(
             child: Card(
               margin: EdgeInsets.zero,
+              clipBehavior: Clip.antiAlias,
               child: Stack(
                 children: [
-                  if (controller.calls.isEmpty && controller.loading)
-                    TableShimmer(rows: 12, columns: isAdmin ? 7 : 6)
-                  else if (controller.calls.isEmpty)
-                    const Center(child: Text('Nenhum atendimento encontrado.'))
+                  if (controller.companies.isEmpty && controller.loading)
+                    const TableShimmer(rows: 12, columns: 5)
+                  else if (controller.companies.isEmpty)
+                    const Center(child: Text('Nenhuma empresa encontrada.'))
                   else
-                    _AttendancesTable(
-                      calls: controller.calls,
-                      isAdmin: isAdmin,
-                      onOpen: (call) =>
-                          context.go('/call/${widget.slug}/${call.id}'),
+                    _CompaniesTable(
+                      companies: controller.companies,
+                      showPlans: widget.slug == 'gestalk',
+                      onPlans: (company) => context.go('/plans/${widget.slug}'),
+                      onChannels: (company) => context.go(
+                        '/channels/${widget.slug}/company/${company.id}',
+                      ),
+                      onUsers: (company) => context.go(
+                        '/users/${widget.slug}/company/${company.id}',
+                      ),
+                      onEdit: (company) => context.go(
+                        '/companies/${widget.slug}/${company.id}/edit',
+                      ),
                     ),
-                  if (controller.loading && controller.calls.isNotEmpty)
+                  if (controller.loading && controller.companies.isNotEmpty)
                     Positioned.fill(
                       child: ColoredBox(
-                        color: Colors.white.withValues(alpha: 0.55),
-                        child: TableShimmer(rows: 8, columns: isAdmin ? 7 : 6),
+                        color: Colors.white.withValues(alpha: 0.62),
+                        child: const TableShimmer(rows: 8, columns: 5),
                       ),
                     ),
                 ],
@@ -110,20 +116,22 @@ class _AttendancesScreenState extends State<AttendancesScreen> {
   }
 }
 
-class _AttendancesToolbar extends StatefulWidget {
-  final AttendancesController controller;
+class _CompaniesToolbar extends StatefulWidget {
+  final CompaniesController controller;
   final String slug;
+  final bool canCreate;
 
-  const _AttendancesToolbar({
+  const _CompaniesToolbar({
     required this.controller,
     required this.slug,
+    required this.canCreate,
   });
 
   @override
-  State<_AttendancesToolbar> createState() => _AttendancesToolbarState();
+  State<_CompaniesToolbar> createState() => _CompaniesToolbarState();
 }
 
-class _AttendancesToolbarState extends State<_AttendancesToolbar> {
+class _CompaniesToolbarState extends State<_CompaniesToolbar> {
   late final TextEditingController _searchController;
 
   @override
@@ -134,7 +142,7 @@ class _AttendancesToolbarState extends State<_AttendancesToolbar> {
   }
 
   @override
-  void didUpdateWidget(covariant _AttendancesToolbar oldWidget) {
+  void didUpdateWidget(covariant _CompaniesToolbar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_searchController.text != widget.controller.searchTerm) {
       _searchController.text = widget.controller.searchTerm;
@@ -150,15 +158,14 @@ class _AttendancesToolbarState extends State<_AttendancesToolbar> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
-
     return Wrap(
       alignment: WrapAlignment.spaceBetween,
       crossAxisAlignment: WrapCrossAlignment.center,
-      runSpacing: 10,
+      runSpacing: 12,
       spacing: 12,
       children: [
         Text(
-          '${controller.total} atendimento(s)',
+          '${controller.total} empresa(s)',
           style: const TextStyle(
             color: Colors.white,
             fontSize: 18,
@@ -166,7 +173,7 @@ class _AttendancesToolbarState extends State<_AttendancesToolbar> {
           ),
         ),
         Wrap(
-          spacing: 12,
+          spacing: 10,
           runSpacing: 10,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
@@ -174,7 +181,7 @@ class _AttendancesToolbarState extends State<_AttendancesToolbar> {
               width: 340,
               child: TextField(
                 controller: _searchController,
-                enabled: !controller.loading,
+                enabled: !controller.loading && widget.slug == 'gestalk',
                 onChanged: (value) => controller.setSearchTerm(
                   slug: widget.slug,
                   value: value,
@@ -205,53 +212,16 @@ class _AttendancesToolbarState extends State<_AttendancesToolbar> {
                           },
                           icon: const Icon(Icons.close),
                         ),
-                  labelText: 'Buscar por canal ou protocolo',
+                  labelText: 'Pesquisar por nome ou slug',
                 ),
               ),
             ),
-            SizedBox(
-              width: 230,
-              child: DropdownButtonFormField<String>(
-                initialValue: controller.status,
-                decoration: const InputDecoration(
-                  filled: true,
-                  fillColor: Colors.white,
-                  isDense: true,
-                  labelText: 'Status',
-                  labelStyle: TextStyle(color: Color(0xFF263238)),
-                  floatingLabelStyle: TextStyle(
-                    color: AppTheme.primary,
-                    fontWeight: FontWeight.w800,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: AppTheme.primary, width: 2),
-                  ),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'ALL', child: Text('Todos')),
-                  DropdownMenuItem(
-                    value: 'WAITING_FOR_RESPONSE',
-                    child: Text('Aguardando'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'IN_PROGRESS',
-                    child: Text('Em atendimento'),
-                  ),
-                  DropdownMenuItem(
-                      value: 'FINISHED', child: Text('Finalizado')),
-                  DropdownMenuItem(value: 'CANCELED', child: Text('Cancelado')),
-                ],
-                onChanged: controller.loading
-                    ? null
-                    : (value) {
-                        if (value == null) return;
-                        controller.setStatus(
-                          slug: widget.slug,
-                          value: value,
-                        );
-                      },
+            if (widget.canCreate)
+              FilledButton.icon(
+                onPressed: () => context.go('/companies/${widget.slug}/create'),
+                icon: const Icon(Icons.add),
+                label: const Text('Empresa'),
               ),
-            ),
           ],
         ),
       ],
@@ -259,34 +229,38 @@ class _AttendancesToolbarState extends State<_AttendancesToolbar> {
   }
 }
 
-class _AttendancesTable extends StatefulWidget {
-  static const rowHeight = 58.0;
-  static const headerHeight = 48.0;
-  static const actionsWidth = 104.0;
+class _CompaniesTable extends StatefulWidget {
+  static const rowHeight = 64.0;
+  static const headerHeight = 54.0;
+  static const actionsWidth = 178.0;
   static const columns = [
-    _ColumnSpec('ID', 80),
-    _ColumnSpec('Protocolo', 120),
-    _ColumnSpec('Status', 140),
-    _ColumnSpec('Canal', 160),
-    _ColumnSpec('Hora de entrada', 140),
-    _ColumnSpec('Encerramento', 140),
+    _ColumnSpec('ID', 100),
+    _ColumnSpec('Nome', 260, flexGrow: 1),
+    _ColumnSpec('Logo', 90),
+    _ColumnSpec('Status', 120),
   ];
 
-  final List<AttendanceCall> calls;
-  final bool isAdmin;
-  final ValueChanged<AttendanceCall> onOpen;
+  final List<Company> companies;
+  final bool showPlans;
+  final ValueChanged<Company> onPlans;
+  final ValueChanged<Company> onChannels;
+  final ValueChanged<Company> onUsers;
+  final ValueChanged<Company> onEdit;
 
-  const _AttendancesTable({
-    required this.calls,
-    required this.isAdmin,
-    required this.onOpen,
+  const _CompaniesTable({
+    required this.companies,
+    required this.showPlans,
+    required this.onPlans,
+    required this.onChannels,
+    required this.onUsers,
+    required this.onEdit,
   });
 
   @override
-  State<_AttendancesTable> createState() => _AttendancesTableState();
+  State<_CompaniesTable> createState() => _CompaniesTableState();
 }
 
-class _AttendancesTableState extends State<_AttendancesTable> {
+class _CompaniesTableState extends State<_CompaniesTable> {
   final _headerHorizontalController = ScrollController();
   final _bodyHorizontalController = ScrollController();
   final _bodyVerticalController = ScrollController();
@@ -354,41 +328,18 @@ class _AttendancesTableState extends State<_AttendancesTable> {
 
   double _safeOffset(double offset, ScrollController controller) {
     if (!controller.hasClients) return 0;
-    final max = controller.position.maxScrollExtent;
-    return offset.clamp(0.0, max);
-  }
-
-  List<_ColumnSpec> _expandedColumns(
-    List<_ColumnSpec> columns,
-    double availableExtra,
-  ) {
-    if (availableExtra <= 0) return columns;
-
-    return [
-      for (final column in columns)
-        column.title == 'Canal'
-            ? _ColumnSpec(column.title, column.width + availableExtra)
-            : column,
-    ];
+    return offset.clamp(0.0, controller.position.maxScrollExtent);
   }
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final leftMinWidth = _AttendancesTable.columns.fold<double>(
-          0,
-          (sum, column) => sum + column.width,
-        );
-        final reservedActionsWidth =
-            widget.isAdmin ? _AttendancesTable.actionsWidth : 0.0;
         final leftViewportWidth =
-            (constraints.maxWidth - reservedActionsWidth).clamp(280.0, 9999.0);
-        final columns = _expandedColumns(
-          _AttendancesTable.columns,
-          leftViewportWidth - leftMinWidth,
-        );
-        final leftContentWidth = columns.fold<double>(
+            (constraints.maxWidth - _CompaniesTable.actionsWidth)
+                .clamp(280.0, 9999.0);
+        final resolvedColumns = _resolveColumns(leftViewportWidth);
+        final tableWidth = resolvedColumns.fold<double>(
           0,
           (sum, column) => sum + column.width,
         );
@@ -396,7 +347,6 @@ class _AttendancesTableState extends State<_AttendancesTable> {
         return Column(
           children: [
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
                   width: leftViewportWidth,
@@ -404,21 +354,19 @@ class _AttendancesTableState extends State<_AttendancesTable> {
                     controller: _headerHorizontalController,
                     scrollDirection: Axis.horizontal,
                     child: SizedBox(
-                      width: leftContentWidth,
-                      child: _HeaderRow(columns: columns),
+                      width: tableWidth,
+                      child: _HeaderRow(columns: resolvedColumns),
                     ),
                   ),
                 ),
-                if (widget.isAdmin)
-                  SizedBox(
-                    width: _AttendancesTable.actionsWidth,
-                    child: const _ActionHeader(),
-                  ),
+                const SizedBox(
+                  width: _CompaniesTable.actionsWidth,
+                  child: _ActionHeader(),
+                ),
               ],
             ),
             Expanded(
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(
                     width: leftViewportWidth,
@@ -426,36 +374,40 @@ class _AttendancesTableState extends State<_AttendancesTable> {
                       controller: _bodyHorizontalController,
                       scrollDirection: Axis.horizontal,
                       child: SizedBox(
-                        width: leftContentWidth,
+                        width: tableWidth,
                         child: ListView.builder(
                           controller: _bodyVerticalController,
-                          itemCount: widget.calls.length,
+                          itemCount: widget.companies.length,
                           itemBuilder: (context, index) {
-                            return _CallDataRow(
-                              call: widget.calls[index],
+                            return _DataRow(
+                              company: widget.companies[index],
                               index: index,
-                              columns: columns,
+                              columns: resolvedColumns,
                             );
                           },
                         ),
                       ),
                     ),
                   ),
-                  if (widget.isAdmin)
-                    SizedBox(
-                      width: _AttendancesTable.actionsWidth,
-                      child: ListView.builder(
-                        controller: _actionsVerticalController,
-                        itemCount: widget.calls.length,
-                        itemBuilder: (context, index) {
-                          return _CallActionRow(
-                            call: widget.calls[index],
-                            index: index,
-                            onOpen: widget.onOpen,
-                          );
-                        },
-                      ),
+                  SizedBox(
+                    width: _CompaniesTable.actionsWidth,
+                    child: ListView.builder(
+                      controller: _actionsVerticalController,
+                      itemCount: widget.companies.length,
+                      itemBuilder: (context, index) {
+                        final company = widget.companies[index];
+                        return _ActionRow(
+                          company: company,
+                          index: index,
+                          showPlans: widget.showPlans,
+                          onPlans: widget.onPlans,
+                          onChannels: widget.onChannels,
+                          onUsers: widget.onUsers,
+                          onEdit: widget.onEdit,
+                        );
+                      },
                     ),
+                  ),
                 ],
               ),
             ),
@@ -464,13 +416,35 @@ class _AttendancesTableState extends State<_AttendancesTable> {
       },
     );
   }
+
+  List<_ColumnSpec> _resolveColumns(double viewportWidth) {
+    final baseWidth = _CompaniesTable.columns.fold<double>(
+      0,
+      (sum, column) => sum + column.width,
+    );
+    final extraWidth =
+        viewportWidth > baseWidth ? viewportWidth - baseWidth : 0;
+
+    return _CompaniesTable.columns
+        .map(
+          (column) => column.copyWith(
+            width: column.width + (extraWidth * column.flexGrow),
+          ),
+        )
+        .toList();
+  }
 }
 
 class _ColumnSpec {
   final String title;
   final double width;
+  final double flexGrow;
 
-  const _ColumnSpec(this.title, this.width);
+  const _ColumnSpec(this.title, this.width, {this.flexGrow = 0});
+
+  _ColumnSpec copyWith({double? width}) {
+    return _ColumnSpec(title, width ?? this.width, flexGrow: flexGrow);
+  }
 }
 
 class _HeaderRow extends StatelessWidget {
@@ -481,7 +455,7 @@ class _HeaderRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: _AttendancesTable.headerHeight,
+      height: _CompaniesTable.headerHeight,
       color: const Color(0xFFEAF1F1),
       child: Row(
         children: [
@@ -505,7 +479,7 @@ class _ActionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: _AttendancesTable.headerHeight,
+      height: _CompaniesTable.headerHeight,
       color: const Color(0xFFEAF1F1),
       alignment: Alignment.center,
       child: const Text(
@@ -516,13 +490,13 @@ class _ActionHeader extends StatelessWidget {
   }
 }
 
-class _CallDataRow extends StatelessWidget {
-  final AttendanceCall call;
+class _DataRow extends StatelessWidget {
+  final Company company;
   final int index;
   final List<_ColumnSpec> columns;
 
-  const _CallDataRow({
-    required this.call,
+  const _DataRow({
+    required this.company,
     required this.index,
     required this.columns,
   });
@@ -530,28 +504,29 @@ class _CallDataRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final values = [
-      _shortId(call.id),
-      _fallback(call.protocol),
-      _translateStatus(call.status),
-      _fallback(call.channelName),
-      _formatDate(call.createdAt),
-      _formatDate(call.endedAt),
+      company.id,
+      _fallback(company.name),
+      company.logo,
+      company.isInative ? 'Desativado' : 'Ativo',
     ];
 
     return Container(
-      height: _AttendancesTable.rowHeight,
+      height: _CompaniesTable.rowHeight,
       color: index.isEven ? const Color(0xFFF7FAFA) : Colors.white,
       child: Row(
         children: [
           for (var i = 0; i < columns.length; i++)
             _Cell(
               width: columns[i].width,
-              child: i == 2
-                  ? _StatusBadge(status: call.status)
-                  : AppOverflowTooltipText(
-                      values[i],
-                      tooltip: i == 0 ? call.id : values[i],
-                    ),
+              child: switch (i) {
+                2 => _LogoCell(url: company.logo),
+                3 => _StatusBadge(inactive: company.isInative),
+                _ => AppOverflowTooltipText(
+                    i == 0 ? _shortId(values[i]) : values[i],
+                    tooltip: values[i],
+                    maxLines: 2,
+                  ),
+              },
             ),
         ],
       ),
@@ -559,30 +534,107 @@ class _CallDataRow extends StatelessWidget {
   }
 }
 
-class _CallActionRow extends StatelessWidget {
-  final AttendanceCall call;
-  final int index;
-  final ValueChanged<AttendanceCall> onOpen;
+class _LogoCell extends StatelessWidget {
+  final String url;
 
-  const _CallActionRow({
-    required this.call,
+  const _LogoCell({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.isEmpty) {
+      return const Text('-');
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.network(
+        url,
+        width: 42,
+        height: 42,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Text('-'),
+      ),
+    );
+  }
+}
+
+class _ActionRow extends StatelessWidget {
+  final Company company;
+  final int index;
+  final bool showPlans;
+  final ValueChanged<Company> onPlans;
+  final ValueChanged<Company> onChannels;
+  final ValueChanged<Company> onUsers;
+  final ValueChanged<Company> onEdit;
+
+  const _ActionRow({
+    required this.company,
     required this.index,
-    required this.onOpen,
+    required this.showPlans,
+    required this.onPlans,
+    required this.onChannels,
+    required this.onUsers,
+    required this.onEdit,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: _AttendancesTable.rowHeight,
+      height: _CompaniesTable.rowHeight,
       color: index.isEven ? const Color(0xFFF7FAFA) : Colors.white,
       alignment: Alignment.center,
-      child: Tooltip(
-        message: 'Abrir atendimento',
-        child: IconButton.filledTonal(
-          onPressed: () => onOpen(call),
-          icon: const Icon(Icons.open_in_new, size: 18),
-          color: AppTheme.primary,
-          constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+      child: Wrap(
+        spacing: 5,
+        children: [
+          if (showPlans)
+            _ActionIcon(
+              tooltip: 'Planos',
+              icon: Icons.dashboard_outlined,
+              onPressed: () => onPlans(company),
+            ),
+          _ActionIcon(
+            tooltip: 'Canais',
+            icon: Icons.inbox_outlined,
+            onPressed: () => onChannels(company),
+          ),
+          _ActionIcon(
+            tooltip: 'Usuários',
+            icon: Icons.group_outlined,
+            onPressed: () => onUsers(company),
+          ),
+          _ActionIcon(
+            tooltip: 'Editar',
+            icon: Icons.edit_outlined,
+            onPressed: () => onEdit(company),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionIcon extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _ActionIcon({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton.filled(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        style: IconButton.styleFrom(
+          backgroundColor: const Color(0xFF0F5592),
+          foregroundColor: Colors.white,
+          fixedSize: const Size(38, 38),
           padding: EdgeInsets.zero,
         ),
       ),
@@ -618,16 +670,15 @@ class _Cell extends StatelessWidget {
 }
 
 class _StatusBadge extends StatelessWidget {
-  final String status;
+  final bool inactive;
 
-  const _StatusBadge({required this.status});
+  const _StatusBadge({required this.inactive});
 
   @override
   Widget build(BuildContext context) {
-    final color = _statusColor(status);
-
+    final color = inactive ? AppTheme.danger : AppTheme.success;
     return Chip(
-      label: Text(_translateStatus(status)),
+      label: Text(inactive ? 'Desativado' : 'Ativo'),
       backgroundColor: color.withValues(alpha: 0.12),
       labelStyle: TextStyle(color: color, fontWeight: FontWeight.w700),
       side: BorderSide(color: color.withValues(alpha: 0.2)),
@@ -635,14 +686,21 @@ class _StatusBadge extends StatelessWidget {
   }
 }
 
-Color _statusColor(String status) {
-  return switch (status) {
-    'FINISHED' => AppTheme.success,
-    'CANCELED' => AppTheme.danger,
-    'IN_PROGRESS' => Colors.blue,
-    'WAITING_FOR_RESPONSE' => Colors.orange,
-    _ => Colors.grey,
-  };
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+
+  const _ErrorBanner(this.message);
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      color: Colors.red.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text(message, style: const TextStyle(color: AppTheme.danger)),
+      ),
+    );
+  }
 }
 
 String _shortId(String id) {
@@ -650,23 +708,4 @@ String _shortId(String id) {
   return id.substring(0, 8);
 }
 
-String _formatDate(DateTime? date) {
-  if (date == null) return '-';
-  return DateFormat('dd/MM/yyyy HH:mm').format(date.toLocal());
-}
-
-String _translateStatus(String status) {
-  return switch (status) {
-    'FINISHED' => 'Finalizado',
-    'CANCELED' => 'Cancelado',
-    'IN_PROGRESS' => 'Em atendimento',
-    'WAITING_FOR_RESPONSE' => 'Aguardando',
-    _ => status.isEmpty ? '-' : status,
-  };
-}
-
-String _fallback(String? value) {
-  final text = value?.trim();
-  if (text == null || text.isEmpty) return '-';
-  return text;
-}
+String _fallback(String value) => value.isEmpty ? '-' : value;

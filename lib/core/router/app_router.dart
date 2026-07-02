@@ -5,15 +5,24 @@ import '../config/app_config.dart';
 import '../../controllers/auth_controller.dart';
 import '../../models/user.dart';
 import '../../screens/about_screen.dart';
+import '../../screens/admin_panel_screen.dart';
 import '../../screens/attendances_screen.dart';
+import '../../screens/channel_form_screen.dart';
+import '../../screens/channels_screen.dart';
 import '../../screens/call_screen.dart';
 import '../../screens/call_review_screen.dart';
+import '../../screens/companies_screen.dart';
+import '../../screens/company_form_screen.dart';
+import '../../screens/interpreters_screen.dart';
 import '../../screens/login_screen.dart';
 import '../../screens/notifications_screen.dart';
-import '../../screens/placeholder_page_screen.dart';
+import '../../screens/plan_form_screen.dart';
+import '../../screens/plans_screen.dart';
 import '../../screens/profile_screen.dart';
 import '../../screens/queue_screen.dart';
 import '../../screens/reports_screen.dart';
+import '../../screens/user_edit_screen.dart';
+import '../../screens/user_create_screen.dart';
 import '../../screens/users_screen.dart';
 
 class AppRouter {
@@ -75,58 +84,102 @@ class AppRouter {
           ),
         ),
         GoRoute(
+          path: '/users/:slug/company/:companyId',
+          builder: (_, state) => UsersScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            companyId: state.pathParameters['companyId'],
+          ),
+        ),
+        GoRoute(
+          path: '/users/:slug/:id/edit',
+          builder: (_, state) => UserEditScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            userId: state.pathParameters['id'] ?? '',
+            backLocation: state.uri.queryParameters['back'],
+          ),
+        ),
+        GoRoute(
+          path: '/users/:slug/create',
+          builder: (_, state) => UserCreateScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            backLocation: state.uri.queryParameters['back'],
+          ),
+        ),
+        GoRoute(
           path: '/channels/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'channels',
-            title: 'Canais',
-            icon: Icons.account_tree_outlined,
-            description:
-                'Área de canais do desktop. A rota já está disponível no menu conforme permissão.',
+          builder: (_, state) => ChannelsScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/channels/:slug/company/:companyId',
+          builder: (_, state) => ChannelsScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            companyId: state.pathParameters['companyId'],
+          ),
+        ),
+        GoRoute(
+          path: '/channels/:slug/create',
+          builder: (_, state) => ChannelFormScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/channels/:slug/:id/edit',
+          builder: (_, state) => ChannelFormScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            channelId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(
           path: '/companies/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'companies',
-            title: 'Empresas',
-            icon: Icons.business_outlined,
-            description:
-                'Área de empresas do desktop. A tela pode evoluir para listagem paginada igual ao front.',
+          builder: (_, state) => CompaniesScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/companies/:slug/create',
+          builder: (_, state) => CompanyFormScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/companies/:slug/:id/edit',
+          builder: (_, state) => CompanyFormScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            companyId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(
           path: '/plans/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'plans',
-            title: 'Planos',
-            icon: Icons.workspace_premium_outlined,
-            description:
-                'Área de planos do desktop. A rota já respeita as permissões do usuário.',
+          builder: (_, state) => PlansScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/plans/:slug/create',
+          builder: (_, state) => PlanFormScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/plans/:slug/:id/edit',
+          builder: (_, state) => PlanFormScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            planId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(
           path: '/admin/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'admin',
-            title: 'Painel Admin',
-            icon: Icons.admin_panel_settings_outlined,
-            description:
-                'Painel administrativo do desktop. Disponível apenas para usuários administradores.',
+          builder: (_, state) => AdminPanelScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            initialTab: state.uri.queryParameters['tab'] ?? 'dashboard',
           ),
         ),
         GoRoute(
           path: '/interpreters/:slug',
-          builder: (_, state) => _placeholder(
-            state,
-            routeKey: 'interpreters',
-            title: 'Intérpretes',
-            icon: Icons.support_agent_outlined,
-            description:
-                'Área de intérpretes do desktop. A rota já está pronta para conectar os dados do backend.',
+          builder: (_, state) => InterpretersScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
           ),
         ),
         GoRoute(
@@ -177,21 +230,5 @@ class AppRouter {
     if (permissions.contains('plans')) return '/plans/$slug';
 
     return '/profile/$slug';
-  }
-
-  static PlaceholderPageScreen _placeholder(
-    GoRouterState state, {
-    required String routeKey,
-    required String title,
-    required IconData icon,
-    required String description,
-  }) {
-    return PlaceholderPageScreen(
-      slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
-      routeKey: routeKey,
-      title: title,
-      icon: icon,
-      description: description,
-    );
   }
 }

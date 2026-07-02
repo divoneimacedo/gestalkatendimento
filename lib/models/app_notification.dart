@@ -7,6 +7,7 @@ class AppNotification {
   final String? videoUrl;
   final Map<String, dynamic>? data;
   final DateTime? createdAt;
+  final DateTime? readAt;
 
   const AppNotification({
     required this.id,
@@ -17,6 +18,7 @@ class AppNotification {
     this.videoUrl,
     this.data,
     this.createdAt,
+    this.readAt,
   });
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
@@ -31,6 +33,7 @@ class AppNotification {
       videoUrl: _nullableString(json['videoUrl']),
       data: rawData is Map ? Map<String, dynamic>.from(rawData) : null,
       createdAt: _date(json['createdAt']),
+      readAt: _date(json['readAt']),
     );
   }
 
@@ -43,6 +46,7 @@ class AppNotification {
     String? videoUrl,
     Map<String, dynamic>? data,
     DateTime? createdAt,
+    DateTime? readAt,
   }) {
     return AppNotification(
       id: id ?? this.id,
@@ -53,6 +57,7 @@ class AppNotification {
       videoUrl: videoUrl ?? this.videoUrl,
       data: data ?? this.data,
       createdAt: createdAt ?? this.createdAt,
+      readAt: readAt ?? this.readAt,
     );
   }
 

@@ -27,15 +27,23 @@ class CallScreen extends StatefulWidget {
 }
 
 class _CallScreenState extends State<CallScreen> {
+  static const _chatTopic = 'CHAT';
+
   sdk.Room? _room;
   final Map<String, sdk.Participant> _remoteParticipants = {};
+  final List<sdk.PubSubMessage> _chatMessages = [];
+  final TextEditingController _chatController = TextEditingController();
 
   bool _joining = true;
   bool _joined = false;
   bool _cameraEnabled = true;
   bool _microphoneEnabled = true;
   bool _speakerEnabled = true;
+  bool _chatOpen = false;
+  bool _chatSubscribed = false;
+  int _unreadChatMessages = 0;
   String? _callError;
+  String? _deviceWarning;
   String _roomState = 'Conectando';
 
   @override
@@ -47,6 +55,7 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void dispose() {
     _leaveRoom();
+    _chatController.dispose();
     super.dispose();
   }
 
@@ -54,6 +63,9 @@ class _CallScreenState extends State<CallScreen> {
     setState(() {
       _joining = true;
       _callError = null;
+      _deviceWarning = null;
+      _cameraEnabled = true;
+      _microphoneEnabled = true;
     });
 
     final controller = context.read<CallController>();
@@ -74,6 +86,24 @@ class _CallScreenState extends State<CallScreen> {
               'Permissão de câmera ou microfone não concedida. Libere o acesso nas configurações do sistema.';
         });
         return;
+      }
+
+      final mediaCheck = await _checkMediaAvailability();
+      if (!mediaCheck.cameraAvailable || !mediaCheck.microphoneAvailable) {
+        await _sendTechnicalLog(
+          event: mediaCheck.suspectedConcurrency
+              ? 'media_device_concurrency_suspected'
+              : 'media_device_unavailable',
+          error: mediaCheck.toLog(),
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _cameraEnabled = mediaCheck.cameraAvailable;
+          _microphoneEnabled = mediaCheck.microphoneAvailable;
+          _deviceWarning = mediaCheck.message;
+        });
+        _showDeviceWarning(mediaCheck.message);
       }
 
       await controller.load(widget.callId);
@@ -151,6 +181,129 @@ class _CallScreenState extends State<CallScreen> {
     final microphone = await Permission.microphone.request();
 
     return camera.isGranted && microphone.isGranted;
+  }
+
+  Future<_MediaAvailability> _checkMediaAvailability() async {
+    final camera = await _probeCamera();
+    final microphone = await _probeMicrophone();
+
+    return _MediaAvailability(camera: camera, microphone: microphone);
+  }
+
+  Future<_DeviceProbe> _probeCamera() async {
+    sdk.CustomTrack? track;
+
+    try {
+      track = await _createCameraTrack();
+
+      if (track == null) {
+        return const _DeviceProbe.unavailable(
+          label: 'Câmera',
+          reason: 'O VideoSDK não conseguiu criar a trilha de vídeo.',
+        );
+      }
+
+      return const _DeviceProbe.available(label: 'Câmera');
+    } catch (error) {
+      return _DeviceProbe.unavailable(
+        label: 'Câmera',
+        reason: error.toString(),
+      );
+    } finally {
+      await _disposeTrack(track);
+    }
+  }
+
+  Future<_DeviceProbe> _probeMicrophone() async {
+    sdk.CustomTrack? track;
+
+    try {
+      track = await _createMicrophoneTrack();
+
+      if (track == null) {
+        return const _DeviceProbe.unavailable(
+          label: 'Microfone',
+          reason: 'O VideoSDK não conseguiu criar a trilha de áudio.',
+        );
+      }
+
+      return const _DeviceProbe.available(label: 'Microfone');
+    } catch (error) {
+      return _DeviceProbe.unavailable(
+        label: 'Microfone',
+        reason: error.toString(),
+      );
+    } finally {
+      await _disposeTrack(track);
+    }
+  }
+
+  Future<sdk.CustomTrack?> _createCameraTrack() async {
+    final track = await sdk.VideoSDK.createCameraVideoTrack(
+      encoderConfig: sdk.CustomVideoTrackConfig.h360p_w640p,
+      multiStream: true,
+    );
+
+    return track is sdk.CustomTrack ? track : null;
+  }
+
+  Future<sdk.CustomTrack?> _createMicrophoneTrack() async {
+    final track = await sdk.VideoSDK.createMicrophoneAudioTrack(
+      encoderConfig: sdk.CustomAudioTrackConfig.speech_standard,
+    );
+
+    return track is sdk.CustomTrack ? track : null;
+  }
+
+  Future<void> _disposeTrack(sdk.CustomTrack? track) async {
+    if (track == null) return;
+
+    try {
+      await track.dispose();
+    } catch (_) {}
+  }
+
+  void _showDeviceWarning(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 12),
+          content: Text(message),
+          action: SnackBarAction(
+            label: 'OK',
+            onPressed: () {},
+          ),
+        ),
+      );
+  }
+
+  Future<void> _warnMediaToggleFailure({
+    required String deviceLabel,
+    required String reason,
+  }) async {
+    final message = _buildDeviceWarningMessage(
+      unavailableLabels: [deviceLabel],
+      reasons: {deviceLabel: reason},
+    );
+
+    await _sendTechnicalLog(
+      event: _isPossibleDeviceConcurrency(reason)
+          ? 'media_toggle_concurrency_suspected'
+          : 'media_toggle_unavailable',
+      error: {
+        'device': deviceLabel,
+        'reason': reason,
+        'suspectedConcurrency': _isPossibleDeviceConcurrency(reason),
+      },
+    );
+
+    if (!mounted) return;
+    setState(() => _deviceWarning = message);
+    _showDeviceWarning(message);
   }
 
   Future<void> _sendTechnicalLog({
@@ -319,6 +472,7 @@ class _CallScreenState extends State<CallScreen> {
           ..clear()
           ..addAll(room.participants);
       });
+      unawaited(_subscribeChat(room));
     });
 
     room.on(sdk.Events.roomLeft, (String? errorMessage) {
@@ -366,6 +520,85 @@ class _CallScreenState extends State<CallScreen> {
     });
   }
 
+  Future<void> _subscribeChat(sdk.Room room) async {
+    if (_chatSubscribed) return;
+
+    try {
+      final history =
+          await room.pubSub.subscribe(_chatTopic, _handleChatMessage);
+
+      if (!mounted) return;
+      setState(() {
+        _chatSubscribed = true;
+        for (final message in history.messages) {
+          _addChatMessage(message, incrementUnread: false);
+        }
+      });
+    } catch (error) {
+      await _sendTechnicalLog(
+        event: 'chat_subscribe_error',
+        error: {'message': error.toString()},
+      );
+    }
+  }
+
+  void _handleChatMessage(sdk.PubSubMessage message) {
+    if (!mounted) return;
+
+    setState(() {
+      _addChatMessage(message, incrementUnread: !_chatOpen);
+    });
+  }
+
+  void _addChatMessage(
+    sdk.PubSubMessage message, {
+    required bool incrementUnread,
+  }) {
+    final alreadyExists = message.id.isNotEmpty &&
+        _chatMessages.any((current) => current.id == message.id);
+    if (alreadyExists) return;
+
+    _chatMessages.add(message);
+    _chatMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    if (incrementUnread) {
+      _unreadChatMessages += 1;
+    }
+  }
+
+  Future<void> _sendChatMessage() async {
+    final room = _room;
+    final text = _chatController.text.trim();
+    if (room == null || text.isEmpty) return;
+
+    _chatController.clear();
+
+    try {
+      await room.pubSub.publish(
+        _chatTopic,
+        text,
+        const sdk.PubSubPublishOptions(persist: true),
+      );
+    } catch (error) {
+      await _sendTechnicalLog(
+        event: 'chat_send_error',
+        error: {'message': error.toString()},
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não foi possível enviar a mensagem.')),
+      );
+    }
+  }
+
+  void _toggleChat() {
+    setState(() {
+      _chatOpen = !_chatOpen;
+      if (_chatOpen) _unreadChatMessages = 0;
+    });
+  }
+
   Future<void> _toggleMicrophone() async {
     final room = _room;
     if (room == null) return;
@@ -373,7 +606,16 @@ class _CallScreenState extends State<CallScreen> {
     if (_microphoneEnabled) {
       await room.muteMic();
     } else {
-      await room.unmuteMic();
+      final track = await _createMicrophoneTrack();
+      if (track == null) {
+        await _warnMediaToggleFailure(
+          deviceLabel: 'Microfone',
+          reason: 'O VideoSDK não conseguiu criar a trilha de áudio.',
+        );
+        return;
+      }
+
+      await room.unmuteMic(track);
     }
 
     setState(() => _microphoneEnabled = !_microphoneEnabled);
@@ -386,7 +628,16 @@ class _CallScreenState extends State<CallScreen> {
     if (_cameraEnabled) {
       await room.disableCam();
     } else {
-      await room.enableCam();
+      final track = await _createCameraTrack();
+      if (track == null) {
+        await _warnMediaToggleFailure(
+          deviceLabel: 'Câmera',
+          reason: 'O VideoSDK não conseguiu criar a trilha de vídeo.',
+        );
+        return;
+      }
+
+      await room.enableCam(track);
     }
 
     setState(() => _cameraEnabled = !_cameraEnabled);
@@ -426,9 +677,14 @@ class _CallScreenState extends State<CallScreen> {
 
   void _leaveRoom() {
     try {
+      final room = _room;
+      if (room != null && _chatSubscribed) {
+        unawaited(room.pubSub.unsubscribe(_chatTopic, _handleChatMessage));
+      }
       _room?.leave();
     } catch (_) {}
     _room = null;
+    _chatSubscribed = false;
     _remoteParticipants.clear();
   }
 
@@ -456,7 +712,21 @@ class _CallScreenState extends State<CallScreen> {
         children: [
           _callHeader(controller),
           const SizedBox(height: 12),
-          Expanded(child: _stage()),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _stage()),
+                if (_chatOpen) ...[
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 340,
+                    child: _chatPanel(),
+                  ),
+                ],
+              ],
+            ),
+          ),
           const SizedBox(height: 16),
           _toolbar(controller),
         ],
@@ -528,6 +798,13 @@ class _CallScreenState extends State<CallScreen> {
                 right: 18,
                 top: 18,
                 child: _errorBanner(),
+              ),
+            if (_callError == null && _deviceWarning != null)
+              Positioned(
+                left: 18,
+                right: 18,
+                top: 18,
+                child: _warningBanner(),
               ),
           ],
         ),
@@ -673,6 +950,107 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  Widget _warningBanner() {
+    return Card(
+      color: const Color(0xFFFFF8E1),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            const Icon(Icons.perm_device_information, color: Colors.orange),
+            const SizedBox(width: 10),
+            Expanded(child: Text(_deviceWarning!)),
+            IconButton(
+              tooltip: 'Fechar aviso',
+              onPressed: () => setState(() => _deviceWarning = null),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _chatPanel() {
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Container(
+            height: 52,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            color: const Color(0xFFEAF1F1),
+            child: Row(
+              children: [
+                const Icon(Icons.chat_outlined, color: AppTheme.secondary),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Chat',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Fechar chat',
+                  onPressed: _toggleChat,
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _chatMessages.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(18),
+                      child: Text(
+                        'Nenhuma mensagem ainda.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _chatMessages.length,
+                    itemBuilder: (context, index) {
+                      return _ChatBubble(message: _chatMessages[index]);
+                    },
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _chatController,
+                    enabled: _joined,
+                    minLines: 1,
+                    maxLines: 3,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _sendChatMessage(),
+                    decoration: const InputDecoration(
+                      hintText: 'Digite uma mensagem...',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  tooltip: 'Enviar',
+                  onPressed: _joined ? _sendChatMessage : null,
+                  icon: const Icon(Icons.send),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _toolbar(CallController controller) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -699,6 +1077,14 @@ class _CallScreenState extends State<CallScreen> {
           icon: _speakerEnabled ? Icons.volume_up : Icons.volume_off,
           active: _speakerEnabled,
           onPressed: _toggleSpeaker,
+        ),
+        const SizedBox(width: 12),
+        _RoundCallButton(
+          tooltip: _chatOpen ? 'Fechar chat' : 'Abrir chat',
+          icon: _chatOpen ? Icons.chat : Icons.chat_outlined,
+          active: _chatOpen,
+          badgeCount: _unreadChatMessages,
+          onPressed: _joined ? _toggleChat : null,
         ),
         const SizedBox(width: 22),
         FilledButton.icon(
@@ -741,6 +1127,160 @@ class _CallScreenState extends State<CallScreen> {
 
     return 'Erro ao conectar no VideoSDK.';
   }
+}
+
+String _buildDeviceWarningMessage({
+  required List<String> unavailableLabels,
+  required Map<String, String> reasons,
+}) {
+  final devices = unavailableLabels.join(' e ');
+  final details = unavailableLabels
+      .map((label) => '$label: ${reasons[label] ?? 'indisponível'}')
+      .join(' | ');
+
+  return '$devices não está disponível no momento. Pode estar em uso por outro aplicativo, bloqueado pelo sistema ou sem permissão. '
+      'Por segurança, o sistema operacional não informa com precisão qual programa está usando o dispositivo. Detalhes: $details';
+}
+
+bool _isPossibleDeviceConcurrency(String reason) {
+  final normalized = reason.toLowerCase();
+  return normalized.contains('busy') ||
+      normalized.contains('in use') ||
+      normalized.contains('notreadable') ||
+      normalized.contains('could not start') ||
+      normalized.contains('resource') ||
+      normalized.contains('cannot create') ||
+      normalized.contains('não conseguiu criar') ||
+      normalized.contains('nao conseguiu criar') ||
+      normalized.contains('failed to create');
+}
+
+class _MediaAvailability {
+  final _DeviceProbe camera;
+  final _DeviceProbe microphone;
+
+  const _MediaAvailability({
+    required this.camera,
+    required this.microphone,
+  });
+
+  bool get cameraAvailable => camera.available;
+  bool get microphoneAvailable => microphone.available;
+
+  String get message {
+    final unavailable = [
+      if (!camera.available) camera.label,
+      if (!microphone.available) microphone.label,
+    ];
+    final reasons = {
+      camera.label: camera.reason,
+      microphone.label: microphone.reason,
+    };
+
+    return _buildDeviceWarningMessage(
+      unavailableLabels: unavailable,
+      reasons: reasons,
+    );
+  }
+
+  Map<String, dynamic> toLog() {
+    return {
+      'camera': camera.toLog(),
+      'microphone': microphone.toLog(),
+      'message': message,
+      'suspectedConcurrency': suspectedConcurrency,
+    };
+  }
+
+  bool get suspectedConcurrency =>
+      !camera.available && camera.suspectedConcurrency ||
+      !microphone.available && microphone.suspectedConcurrency;
+}
+
+class _DeviceProbe {
+  final String label;
+  final bool available;
+  final String reason;
+
+  const _DeviceProbe.available({required this.label})
+      : available = true,
+        reason = 'ok';
+
+  const _DeviceProbe.unavailable({
+    required this.label,
+    required this.reason,
+  }) : available = false;
+
+  Map<String, dynamic> toLog() {
+    return {
+      'label': label,
+      'available': available,
+      'reason': reason,
+      'suspectedConcurrency': suspectedConcurrency,
+    };
+  }
+
+  bool get suspectedConcurrency => _isPossibleDeviceConcurrency(reason);
+}
+
+class _ChatBubble extends StatelessWidget {
+  final sdk.PubSubMessage message;
+
+  const _ChatBubble({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final sender =
+        message.senderName.trim().isEmpty ? 'Participante' : message.senderName;
+    final time = _formatChatTime(message.timestamp);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF4F8F8),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      sender,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Text(
+                    time,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.black.withValues(alpha: 0.52),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(message.message),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _formatChatTime(DateTime date) {
+  final local = date.toLocal();
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
 }
 
 class _ParticipantVideoTile extends StatefulWidget {
@@ -901,12 +1441,14 @@ class _RoundCallButton extends StatelessWidget {
   final String tooltip;
   final IconData icon;
   final bool active;
+  final int badgeCount;
   final VoidCallback? onPressed;
 
   const _RoundCallButton({
     required this.tooltip,
     required this.icon,
     required this.active,
+    this.badgeCount = 0,
     required this.onPressed,
   });
 
@@ -917,17 +1459,43 @@ class _RoundCallButton extends StatelessWidget {
 
     return Tooltip(
       message: tooltip,
-      child: IconButton.filled(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        style: IconButton.styleFrom(
-          backgroundColor: background,
-          foregroundColor: foreground,
-          disabledBackgroundColor: Colors.grey.shade200,
-          disabledForegroundColor: Colors.grey,
-          fixedSize: const Size(54, 54),
-          shape: const CircleBorder(),
-        ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          IconButton.filled(
+            onPressed: onPressed,
+            icon: Icon(icon),
+            style: IconButton.styleFrom(
+              backgroundColor: background,
+              foregroundColor: foreground,
+              disabledBackgroundColor: Colors.grey.shade200,
+              disabledForegroundColor: Colors.grey,
+              fixedSize: const Size(54, 54),
+              shape: const CircleBorder(),
+            ),
+          ),
+          if (badgeCount > 0)
+            Positioned(
+              right: -2,
+              top: -2,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppTheme.danger,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
+                child: Text(
+                  badgeCount > 9 ? '9+' : badgeCount.toString(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
