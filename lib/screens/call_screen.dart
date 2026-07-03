@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:videosdk/videosdk.dart' as sdk;
+import 'package:videosdk_webrtc/flutter_webrtc.dart' as webrtc;
 
 import '../controllers/auth_controller.dart';
 import '../controllers/call_controller.dart';
@@ -30,6 +31,7 @@ class _CallScreenState extends State<CallScreen> {
   static const _chatTopic = 'CHAT';
 
   sdk.Room? _room;
+  Timer? _localMediaWatchdogTimer;
   final Map<String, sdk.Participant> _remoteParticipants = {};
   final List<sdk.PubSubMessage> _chatMessages = [];
   final TextEditingController _chatController = TextEditingController();
@@ -39,7 +41,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _cameraEnabled = true;
   bool _microphoneEnabled = true;
   bool _speakerEnabled = true;
-  bool _chatOpen = false;
+  bool _chatOpen = true;
   bool _chatSubscribed = false;
   int _unreadChatMessages = 0;
   String? _callError;
@@ -54,6 +56,7 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
+    _localMediaWatchdogTimer?.cancel();
     _leaveRoom();
     _chatController.dispose();
     super.dispose();
@@ -95,6 +98,7 @@ class _CallScreenState extends State<CallScreen> {
               ? 'media_device_concurrency_suspected'
               : 'media_device_unavailable',
           error: mediaCheck.toLog(),
+          mediaProbe: mediaCheck.toLog(),
         );
 
         if (!mounted) return;
@@ -191,6 +195,26 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<_DeviceProbe> _probeCamera() async {
+    final nativeProbe = await _probeNativeMediaDevice(
+      label: 'Câmera',
+      expectedKind: 'video',
+      constraints: const {
+        'audio': false,
+        'video': {
+          'mandatory': {
+            'minWidth': '320',
+            'minHeight': '240',
+            'maxWidth': '640',
+            'maxHeight': '480',
+          },
+          'facingMode': 'user',
+          'optional': [],
+        },
+      },
+    );
+
+    if (!nativeProbe.available) return nativeProbe;
+
     sdk.CustomTrack? track;
 
     try {
@@ -215,6 +239,17 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<_DeviceProbe> _probeMicrophone() async {
+    final nativeProbe = await _probeNativeMediaDevice(
+      label: 'Microfone',
+      expectedKind: 'audio',
+      constraints: const {
+        'audio': true,
+        'video': false,
+      },
+    );
+
+    if (!nativeProbe.available) return nativeProbe;
+
     sdk.CustomTrack? track;
 
     try {
@@ -261,6 +296,90 @@ class _CallScreenState extends State<CallScreen> {
     try {
       await track.dispose();
     } catch (_) {}
+  }
+
+  Future<_DeviceProbe> _probeNativeMediaDevice({
+    required String label,
+    required String expectedKind,
+    required Map<String, dynamic> constraints,
+  }) async {
+    webrtc.MediaStream? stream;
+    webrtc.RTCVideoRenderer? previewRenderer;
+
+    try {
+      stream = await webrtc.navigator.mediaDevices
+          .getUserMedia(constraints)
+          .timeout(const Duration(seconds: 7));
+
+      final tracks = expectedKind == 'video'
+          ? stream.getVideoTracks()
+          : stream.getAudioTracks();
+
+      if (tracks.isEmpty) {
+        return _DeviceProbe.unavailable(
+          label: label,
+          reason:
+              'O sistema permitiu abrir o dispositivo, mas nenhuma trilha $expectedKind foi retornada.',
+        );
+      }
+
+      if (expectedKind == 'video') {
+        previewRenderer = webrtc.RTCVideoRenderer();
+        await previewRenderer.initialize();
+
+        final firstFrame = Completer<void>();
+        previewRenderer.onFirstFrameRendered = () {
+          if (!firstFrame.isCompleted) firstFrame.complete();
+        };
+        previewRenderer.srcObject = stream;
+
+        if (previewRenderer.videoWidth <= 0 ||
+            previewRenderer.videoHeight <= 0) {
+          await firstFrame.future.timeout(const Duration(seconds: 4));
+        }
+
+        if (previewRenderer.videoWidth <= 0 ||
+            previewRenderer.videoHeight <= 0 ||
+            !previewRenderer.renderVideo) {
+          return _DeviceProbe.unavailable(
+            label: label,
+            reason:
+                'A câmera foi aberta, mas nenhum frame de vídeo foi renderizado. Pode haver concorrência de uso ou bloqueio do driver.',
+          );
+        }
+      }
+
+      return _DeviceProbe.available(
+        label: label,
+        reason: 'getUserMedia direto validado com sucesso.',
+      );
+    } on TimeoutException {
+      return _DeviceProbe.unavailable(
+        label: label,
+        reason:
+            'Tempo esgotado ao tentar abrir/renderizar o dispositivo. Ele pode estar ocupado por outro aplicativo.',
+      );
+    } catch (error) {
+      return _DeviceProbe.unavailable(
+        label: label,
+        reason: error.toString(),
+      );
+    } finally {
+      final tracks = stream?.getTracks() ?? const <webrtc.MediaStreamTrack>[];
+      for (final track in tracks) {
+        try {
+          await track.stop();
+        } catch (_) {}
+      }
+
+      try {
+        await stream?.dispose();
+      } catch (_) {}
+
+      try {
+        await previewRenderer?.dispose();
+      } catch (_) {}
+    }
   }
 
   void _showDeviceWarning(String message) {
@@ -312,6 +431,7 @@ class _CallScreenState extends State<CallScreen> {
     String? meetingId,
     Map<String, dynamic>? sdkState,
     Map<String, dynamic>? error,
+    Map<String, dynamic>? mediaProbe,
   }) async {
     try {
       final controller = context.read<CallController>();
@@ -338,6 +458,7 @@ class _CallScreenState extends State<CallScreen> {
         },
         'deviceInfo': await _deviceInfoSnapshot(),
         'sdkState': sdkState,
+        'mediaProbe': mediaProbe,
         'error': error,
         'raw': {
           'route': '/call/${widget.slug}/${widget.callId}',
@@ -462,17 +583,125 @@ class _CallScreenState extends State<CallScreen> {
     room.join();
   }
 
+  void _scheduleLocalMediaWatchdog(String trigger) {
+    _localMediaWatchdogTimer?.cancel();
+    _localMediaWatchdogTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      unawaited(_validateLocalMediaState(trigger));
+    });
+  }
+
+  Future<void> _validateLocalMediaState(String trigger) async {
+    final room = _room;
+    final localParticipant = room?.localParticipant;
+    if (!_joined || room == null || localParticipant == null) return;
+
+    final videoStream = _findParticipantStream(localParticipant, 'video');
+    final audioStream = _findParticipantStream(localParticipant, 'audio');
+    final problems = <String>[];
+    final details = <String, dynamic>{
+      'trigger': trigger,
+      'cameraEnabled': _cameraEnabled,
+      'microphoneEnabled': _microphoneEnabled,
+      'hasVideoStream': videoStream != null,
+      'hasAudioStream': audioStream != null,
+    };
+
+    if (_cameraEnabled) {
+      final renderer = videoStream?.renderer;
+      final renderVideo = _readRendererBool(renderer, 'renderVideo');
+      final width = _readRendererInt(renderer, 'videoWidth');
+      final height = _readRendererInt(renderer, 'videoHeight');
+
+      details.addAll({
+        'videoRendererType': renderer?.runtimeType.toString(),
+        'videoRenderVideo': renderVideo,
+        'videoWidth': width,
+        'videoHeight': height,
+      });
+
+      if (videoStream == null ||
+          renderer == null ||
+          renderVideo != true ||
+          width <= 0 ||
+          height <= 0) {
+        problems.add('Câmera');
+      }
+    }
+
+    if (_microphoneEnabled && audioStream == null) {
+      problems.add('Microfone');
+    }
+
+    if (problems.isEmpty) return;
+
+    final reasons = {
+      for (final label in problems)
+        label: label == 'Câmera'
+            ? 'A câmera está ativa, mas o vídeo local não renderizou frames.'
+            : 'O microfone está ativo, mas a trilha local de áudio não apareceu.',
+    };
+    final message = _buildDeviceWarningMessage(
+      unavailableLabels: problems,
+      reasons: reasons,
+    );
+
+    await _sendTechnicalLog(
+      event: 'media_local_stream_not_rendering',
+      error: {
+        'message': message,
+        'details': details,
+        'suspectedConcurrency': true,
+      },
+      mediaProbe: details,
+    );
+
+    if (!mounted) return;
+    setState(() => _deviceWarning = message);
+    _showDeviceWarning(message);
+  }
+
+  sdk.Stream? _findParticipantStream(sdk.Participant participant, String kind) {
+    for (final stream in participant.streams.values) {
+      if (stream.kind == kind) return stream;
+    }
+    return null;
+  }
+
+  bool? _readRendererBool(dynamic renderer, String property) {
+    try {
+      if (property == 'renderVideo') return renderer?.renderVideo as bool?;
+    } catch (_) {}
+    return null;
+  }
+
+  int _readRendererInt(dynamic renderer, String property) {
+    try {
+      final value = switch (property) {
+        'videoWidth' => renderer?.videoWidth,
+        'videoHeight' => renderer?.videoHeight,
+        _ => null,
+      };
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+    } catch (_) {}
+    return 0;
+  }
+
   void _registerRoomEvents(sdk.Room room) {
     room.on(sdk.Events.roomJoined, () {
       setState(() {
         _joining = false;
         _joined = true;
+        _chatOpen = true;
+        _unreadChatMessages = 0;
         _roomState = 'Conectado';
         _remoteParticipants
           ..clear()
           ..addAll(room.participants);
       });
       unawaited(_subscribeChat(room));
+      _scheduleLocalMediaWatchdog('room_joined');
     });
 
     room.on(sdk.Events.roomLeft, (String? errorMessage) {
@@ -606,6 +835,22 @@ class _CallScreenState extends State<CallScreen> {
     if (_microphoneEnabled) {
       await room.muteMic();
     } else {
+      final probe = await _probeNativeMediaDevice(
+        label: 'Microfone',
+        expectedKind: 'audio',
+        constraints: const {
+          'audio': true,
+          'video': false,
+        },
+      );
+      if (!probe.available) {
+        await _warnMediaToggleFailure(
+          deviceLabel: 'Microfone',
+          reason: probe.reason,
+        );
+        return;
+      }
+
       final track = await _createMicrophoneTrack();
       if (track == null) {
         await _warnMediaToggleFailure(
@@ -619,6 +864,9 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     setState(() => _microphoneEnabled = !_microphoneEnabled);
+    if (_microphoneEnabled) {
+      _scheduleLocalMediaWatchdog('microphone_enabled');
+    }
   }
 
   Future<void> _toggleCamera() async {
@@ -628,6 +876,31 @@ class _CallScreenState extends State<CallScreen> {
     if (_cameraEnabled) {
       await room.disableCam();
     } else {
+      final probe = await _probeNativeMediaDevice(
+        label: 'Câmera',
+        expectedKind: 'video',
+        constraints: const {
+          'audio': false,
+          'video': {
+            'mandatory': {
+              'minWidth': '320',
+              'minHeight': '240',
+              'maxWidth': '640',
+              'maxHeight': '480',
+            },
+            'facingMode': 'user',
+            'optional': [],
+          },
+        },
+      );
+      if (!probe.available) {
+        await _warnMediaToggleFailure(
+          deviceLabel: 'Câmera',
+          reason: probe.reason,
+        );
+        return;
+      }
+
       final track = await _createCameraTrack();
       if (track == null) {
         await _warnMediaToggleFailure(
@@ -641,6 +914,9 @@ class _CallScreenState extends State<CallScreen> {
     }
 
     setState(() => _cameraEnabled = !_cameraEnabled);
+    if (_cameraEnabled) {
+      _scheduleLocalMediaWatchdog('camera_enabled');
+    }
   }
 
   void _toggleSpeaker() {
@@ -778,6 +1054,19 @@ class _CallScreenState extends State<CallScreen> {
                 _callError ?? controller.error!,
                 style: const TextStyle(color: Colors.red),
               ),
+            if (_joined)
+              ActionChip(
+                avatar: Icon(
+                  _chatOpen ? Icons.chat : Icons.chat_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  _unreadChatMessages > 0
+                      ? 'Chat ($_unreadChatMessages)'
+                      : 'Chat',
+                ),
+                onPressed: _toggleChat,
+              ),
           ],
         ),
       ),
@@ -848,7 +1137,7 @@ class _CallScreenState extends State<CallScreen> {
             child: _emptyStage(
               icon: Icons.person_outline,
               title: 'Aguardando vídeo remoto',
-              subtitle: 'Você já entrou na sala VideoSDK.',
+              subtitle: 'Você já entrou na sala aguarde.',
             ),
           ),
           Positioned(
@@ -1146,10 +1435,20 @@ bool _isPossibleDeviceConcurrency(String reason) {
   final normalized = reason.toLowerCase();
   return normalized.contains('busy') ||
       normalized.contains('in use') ||
+      normalized.contains('em uso') ||
       normalized.contains('notreadable') ||
+      normalized.contains('trackstarterror') ||
       normalized.contains('could not start') ||
+      normalized.contains('could not open') ||
+      normalized.contains('cannot open') ||
+      normalized.contains('unable to open') ||
+      normalized.contains('device or resource busy') ||
+      normalized.contains('already') ||
+      normalized.contains('ocupado') ||
       normalized.contains('resource') ||
       normalized.contains('cannot create') ||
+      normalized.contains('failed to allocate') ||
+      normalized.contains('capture failed') ||
       normalized.contains('não conseguiu criar') ||
       normalized.contains('nao conseguiu criar') ||
       normalized.contains('failed to create');
@@ -1202,9 +1501,10 @@ class _DeviceProbe {
   final bool available;
   final String reason;
 
-  const _DeviceProbe.available({required this.label})
-      : available = true,
-        reason = 'ok';
+  const _DeviceProbe.available({
+    required this.label,
+    this.reason = 'ok',
+  }) : available = true;
 
   const _DeviceProbe.unavailable({
     required this.label,

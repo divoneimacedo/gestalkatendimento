@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../core/config/app_config.dart';
 import '../core/config/app_theme.dart';
@@ -85,14 +86,7 @@ class AboutScreen extends StatelessWidget {
                         const SizedBox(height: 28),
                         const _SectionTitle('Versionamento'),
                         const SizedBox(height: 10),
-                        const _VersionRow(
-                          label: 'Aplicativo',
-                          value: AppConfig.appName,
-                        ),
-                        const _VersionRow(
-                          label: 'Versão',
-                          value: AppConfig.appVersion,
-                        ),
+                        const _AppVersionInfo(),
                         _VersionRow(
                           label: 'Ambiente',
                           value: AppConfig.environment.name,
@@ -153,6 +147,41 @@ class AboutScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AppVersionInfo extends StatelessWidget {
+  const _AppVersionInfo();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        final packageInfo = snapshot.data;
+        final version = packageInfo == null
+            ? AppConfig.appVersion
+            : '${packageInfo.version}+${packageInfo.buildNumber}';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _VersionRow(
+              label: 'Aplicativo',
+              value: packageInfo?.appName ?? AppConfig.appName,
+            ),
+            _VersionRow(
+              label: 'Pacote',
+              value: packageInfo?.packageName ?? '-',
+            ),
+            _VersionRow(
+              label: 'Versão',
+              value: version,
+            ),
+          ],
+        );
+      },
     );
   }
 }

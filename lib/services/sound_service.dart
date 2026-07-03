@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:ffi/ffi.dart';
+import 'package:window_manager/window_manager.dart';
 
 class SoundService {
   AudioPlayer? _player;
   _WindowsSoundPlayer? _windowsPlayer;
+  Timer? _reinforcementTimer;
   bool _isPlaying = false;
 
   bool get isPlaying => _isPlaying;
@@ -14,6 +17,8 @@ class SoundService {
   Future<void> startContinuousAlert() async {
     if (_isPlaying) return;
     _isPlaying = true;
+    _startReinforcement();
+    unawaited(_bringAppToFront());
 
     if (Platform.isWindows) {
       _windowsPlayer ??= _WindowsSoundPlayer();
@@ -22,13 +27,20 @@ class SoundService {
     }
 
     final player = _player ??= AudioPlayer();
+    await _configurePlayer(player);
     await player.setReleaseMode(ReleaseMode.loop);
-    await player.play(AssetSource('sounds/notification-sound.mp3'));
+    await player.play(
+      AssetSource('sounds/notification-sound.mp3'),
+      volume: 1,
+      mode: PlayerMode.mediaPlayer,
+    );
   }
 
   Future<void> stop() async {
     if (!_isPlaying) return;
     _isPlaying = false;
+    _reinforcementTimer?.cancel();
+    _reinforcementTimer = null;
 
     if (Platform.isWindows) {
       _windowsPlayer?.stop();
@@ -39,6 +51,9 @@ class SoundService {
   }
 
   Future<void> dispose() async {
+    _reinforcementTimer?.cancel();
+    _reinforcementTimer = null;
+
     if (Platform.isWindows) {
       _windowsPlayer?.dispose();
       return;
@@ -50,6 +65,74 @@ class SoundService {
   String _windowsAlertSoundPath() {
     final executableDir = File(Platform.resolvedExecutable).parent.path;
     return '$executableDir\\data\\flutter_assets\\assets\\sounds\\notification-sound.mp3';
+  }
+
+  Future<void> _configurePlayer(AudioPlayer player) async {
+    try {
+      await player.setPlayerMode(PlayerMode.mediaPlayer);
+    } catch (_) {}
+
+    try {
+      await player.setVolume(1);
+    } catch (_) {}
+
+    try {
+      await player.setAudioContext(
+        AudioContextConfig(
+          focus: AudioContextConfigFocus.gain,
+          route: AudioContextConfigRoute.speaker,
+        ).build(),
+      );
+    } catch (_) {
+      // Alguns desktops ignoram AudioContext. O volume/loop continuam ativos.
+    }
+  }
+
+  void _startReinforcement() {
+    _reinforcementTimer?.cancel();
+    _reinforcementTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!_isPlaying) return;
+
+      if (Platform.isWindows) {
+        _windowsPlayer?.boostVolume();
+      } else {
+        final player = _player;
+        if (player != null) {
+          unawaited(_reinforcePlayer(player));
+        }
+      }
+
+      unawaited(_bringAppToFront(inactive: true));
+    });
+  }
+
+  Future<void> _reinforcePlayer(AudioPlayer player) async {
+    try {
+      await player.setVolume(1);
+      await player.resume();
+    } catch (_) {
+      try {
+        await player.play(
+          AssetSource('sounds/notification-sound.mp3'),
+          volume: 1,
+          mode: PlayerMode.mediaPlayer,
+        );
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _bringAppToFront({bool inactive = false}) async {
+    if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux) return;
+
+    try {
+      if (await windowManager.isMinimized()) {
+        await windowManager.restore();
+      }
+      await windowManager.show(inactive: inactive);
+      if (!inactive) {
+        await windowManager.focus();
+      }
+    } catch (_) {}
   }
 }
 
@@ -79,7 +162,12 @@ class _WindowsSoundPlayer {
   void playLoop(String filePath) {
     stop();
     _send('open "$filePath" type mpegvideo alias $_alias');
+    boostVolume();
     _send('play $_alias repeat');
+  }
+
+  void boostVolume() {
+    _send('setaudio $_alias volume to 1000');
   }
 
   void stop() {
