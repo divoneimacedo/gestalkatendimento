@@ -16,6 +16,8 @@ class AppShell extends StatelessWidget {
   final List<Widget> actions;
   final String slug;
   final String currentRoute;
+  final bool navigationLocked;
+  final String? navigationLockedMessage;
 
   const AppShell({
     super.key,
@@ -24,6 +26,8 @@ class AppShell extends StatelessWidget {
     required this.slug,
     required this.currentRoute,
     this.actions = const [],
+    this.navigationLocked = false,
+    this.navigationLockedMessage,
   });
 
   @override
@@ -38,38 +42,52 @@ class AppShell extends StatelessWidget {
     );
 
     return CallbackShortcuts(
-      bindings: _shortcutBindings(context, destinations),
+      bindings: navigationLocked
+          ? const <ShortcutActivator, VoidCallback>{}
+          : _shortcutBindings(context, destinations),
       child: Focus(
         autofocus: true,
-        child: Scaffold(
-          drawer: AppMenuDrawer(slug: slug, currentRoute: currentRoute),
-          appBar: AppBar(
-            title: Row(
-              children: [
-                const GestalkBrand(logoWidth: 86),
-                const SizedBox(width: 18),
-                Flexible(
-                  child: Text(
-                    title,
-                    overflow: TextOverflow.ellipsis,
+        child: PopScope(
+          canPop: !navigationLocked,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && navigationLocked) {
+              _showNavigationLockedMessage(context);
+            }
+          },
+          child: Scaffold(
+            drawer: navigationLocked
+                ? null
+                : AppMenuDrawer(slug: slug, currentRoute: currentRoute),
+            appBar: AppBar(
+              title: Row(
+                children: [
+                  const GestalkBrand(logoWidth: 86),
+                  const SizedBox(width: 18),
+                  Flexible(
+                    child: Text(
+                      title,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
+                ],
+              ),
+              actions: [
+                _UserClock(name: auth.user?.name ?? 'Usuário'),
+                _NotificationButton(
+                  unreadCount: notificationService.unreadCount,
+                  onPressed: navigationLocked
+                      ? () => _showNavigationLockedMessage(context)
+                      : () => context.go('/notifications/$slug'),
                 ),
+                ...actions,
               ],
             ),
-            actions: [
-              _UserClock(name: auth.user?.name ?? 'Usuário'),
-              _NotificationButton(
-                unreadCount: notificationService.unreadCount,
-                onPressed: () => context.go('/notifications/$slug'),
-              ),
-              ...actions,
-            ],
-          ),
-          body: Center(
-            child: Padding(
-              padding: EdgeInsets.all(pagePadding),
-              child: SizedBox.expand(
-                child: child,
+            body: Center(
+              child: Padding(
+                padding: EdgeInsets.all(pagePadding),
+                child: SizedBox.expand(
+                  child: child,
+                ),
               ),
             ),
           ),
@@ -127,6 +145,20 @@ class AppShell extends StatelessWidget {
 
     context.go(destination.path);
   }
+
+  void _showNavigationLockedMessage(BuildContext context) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            navigationLockedMessage ??
+                'Encerre a chamada antes de navegar para outra tela.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
 }
 
 class _UserClock extends StatelessWidget {
@@ -179,7 +211,7 @@ class _UserClock extends StatelessWidget {
 
 class _NotificationButton extends StatelessWidget {
   final int unreadCount;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const _NotificationButton({
     required this.unreadCount,

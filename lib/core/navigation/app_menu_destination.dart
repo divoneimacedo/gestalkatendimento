@@ -127,6 +127,12 @@ List<AppMenuDestination> buildAppMenuDestinations({
       path: '/notifications/$slug',
     ),
     AppMenuDestination(
+      routeKey: 'settings',
+      title: 'Configuracoes',
+      icon: Icons.settings_outlined,
+      path: '/settings/$slug',
+    ),
+    AppMenuDestination(
       routeKey: 'about',
       title: 'Sobre',
       icon: Icons.info_outline,

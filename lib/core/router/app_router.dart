@@ -21,6 +21,7 @@ import '../../screens/plans_screen.dart';
 import '../../screens/profile_screen.dart';
 import '../../screens/queue_screen.dart';
 import '../../screens/reports_screen.dart';
+import '../../screens/settings_screen.dart';
 import '../../screens/user_edit_screen.dart';
 import '../../screens/user_create_screen.dart';
 import '../../screens/users_screen.dart';
@@ -191,6 +192,12 @@ class AppRouter {
         GoRoute(
           path: '/notifications/:slug',
           builder: (_, state) => NotificationsScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/settings/:slug',
+          builder: (_, state) => SettingsScreen(
             slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
           ),
         ),
