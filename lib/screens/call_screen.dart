@@ -28,7 +28,7 @@ class CallScreen extends StatefulWidget {
   State<CallScreen> createState() => _CallScreenState();
 }
 
-class _CallScreenState extends State<CallScreen> {
+class _CallScreenState extends State<CallScreen> with WindowListener {
   static const _chatTopic = 'CHAT';
 
   sdk.Room? _room;
@@ -48,6 +48,7 @@ class _CallScreenState extends State<CallScreen> {
   bool _devicesLoading = false;
   bool _deviceSwitching = false;
   bool _pictureInPicture = false;
+  bool _enteringPictureInPicture = false;
   bool _windowWasMaximized = false;
   int _unreadChatMessages = 0;
   String? _callError;
@@ -64,16 +65,39 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      windowManager.addListener(this);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _startCallFlow());
   }
 
   @override
   void dispose() {
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      windowManager.removeListener(this);
+    }
     _localMediaWatchdogTimer?.cancel();
     unawaited(_restoreWindowFromPictureInPicture());
     _leaveRoom();
     _chatController.dispose();
     super.dispose();
+  }
+
+  @override
+  void onWindowBlur() {
+    if (!_joined ||
+        _room == null ||
+        _pictureInPicture ||
+        _enteringPictureInPicture) {
+      return;
+    }
+
+    _enteringPictureInPicture = true;
+    unawaited(
+      _enterPictureInPicture(focusWindow: false).whenComplete(() {
+        _enteringPictureInPicture = false;
+      }),
+    );
   }
 
   Future<void> _startCallFlow() async {
@@ -1162,7 +1186,7 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
-  Future<void> _enterPictureInPicture() async {
+  Future<void> _enterPictureInPicture({bool focusWindow = true}) async {
     if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux) return;
 
     try {
@@ -1177,7 +1201,9 @@ class _CallScreenState extends State<CallScreen> {
       await windowManager.setSize(const Size(680, 520));
       await windowManager.setAlignment(Alignment.bottomRight);
       await windowManager.setAlwaysOnTop(true);
-      await windowManager.focus();
+      if (focusWindow) {
+        await windowManager.focus();
+      }
 
       if (!mounted) return;
       setState(() {
