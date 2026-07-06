@@ -6,11 +6,12 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 import 'package:videosdk/videosdk.dart' as sdk;
-import 'package:videosdk_webrtc/flutter_webrtc.dart' as webrtc;
+import 'package:window_manager/window_manager.dart';
 
 import '../controllers/auth_controller.dart';
 import '../controllers/call_controller.dart';
 import '../core/config/app_theme.dart';
+import '../services/call_device_preferences.dart';
 import '../widgets/app_shell.dart';
 
 class CallScreen extends StatefulWidget {
@@ -27,10 +28,11 @@ class CallScreen extends StatefulWidget {
   State<CallScreen> createState() => _CallScreenState();
 }
 
-class _CallScreenState extends State<CallScreen> {
+class _CallScreenState extends State<CallScreen> with WindowListener {
   static const _chatTopic = 'CHAT';
 
   sdk.Room? _room;
+  final _devicePreferences = const CallDevicePreferences();
   Timer? _localMediaWatchdogTimer;
   final Map<String, sdk.Participant> _remoteParticipants = {};
   final List<sdk.PubSubMessage> _chatMessages = [];
@@ -43,23 +45,59 @@ class _CallScreenState extends State<CallScreen> {
   bool _speakerEnabled = true;
   bool _chatOpen = true;
   bool _chatSubscribed = false;
+  bool _devicesLoading = false;
+  bool _deviceSwitching = false;
+  bool _pictureInPicture = false;
+  bool _enteringPictureInPicture = false;
+  bool _windowWasMaximized = false;
   int _unreadChatMessages = 0;
   String? _callError;
   String? _deviceWarning;
   String _roomState = 'Conectando';
+  Rect? _windowBoundsBeforePip;
+  List<sdk.VideoDeviceInfo> _videoDevices = const [];
+  List<sdk.AudioDeviceInfo> _audioInputDevices = const [];
+  List<sdk.AudioDeviceInfo> _audioOutputDevices = const [];
+  String? _selectedVideoDeviceId;
+  String? _selectedAudioInputDeviceId;
+  String? _selectedAudioOutputDeviceId;
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      windowManager.addListener(this);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _startCallFlow());
   }
 
   @override
   void dispose() {
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      windowManager.removeListener(this);
+    }
     _localMediaWatchdogTimer?.cancel();
+    unawaited(_restoreWindowFromPictureInPicture());
     _leaveRoom();
     _chatController.dispose();
     super.dispose();
+  }
+
+  @override
+  void onWindowBlur() {
+    if (!_joined ||
+        _room == null ||
+        _pictureInPicture ||
+        _enteringPictureInPicture) {
+      return;
+    }
+
+    _enteringPictureInPicture = true;
+    unawaited(
+      _enterPictureInPicture(focusWindow: false).whenComplete(() {
+        _enteringPictureInPicture = false;
+      }),
+    );
   }
 
   Future<void> _startCallFlow() async {
@@ -90,6 +128,8 @@ class _CallScreenState extends State<CallScreen> {
         });
         return;
       }
+
+      await _loadMediaDevices();
 
       final mediaCheck = await _checkMediaAvailability();
       if (!mediaCheck.cameraAvailable || !mediaCheck.microphoneAvailable) {
@@ -157,7 +197,7 @@ class _CallScreenState extends State<CallScreen> {
         },
       );
 
-      _joinRoom(
+      await _joinRoom(
         meetingId: call.meetingId,
         token: token,
         displayName:
@@ -188,93 +228,25 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<_MediaAvailability> _checkMediaAvailability() async {
-    final camera = await _probeCamera();
-    final microphone = await _probeMicrophone();
+    final camera = _videoDevices.isEmpty
+        ? const _DeviceProbe.unavailable(
+            label: 'Câmera',
+            reason: 'Nenhuma câmera foi encontrada pelo sistema.',
+          )
+        : const _DeviceProbe.available(label: 'Câmera');
+    final microphone = _audioInputDevices.isEmpty
+        ? const _DeviceProbe.unavailable(
+            label: 'Microfone',
+            reason: 'Nenhum microfone foi encontrado pelo sistema.',
+          )
+        : const _DeviceProbe.available(label: 'Microfone');
 
     return _MediaAvailability(camera: camera, microphone: microphone);
   }
 
-  Future<_DeviceProbe> _probeCamera() async {
-    final nativeProbe = await _probeNativeMediaDevice(
-      label: 'Câmera',
-      expectedKind: 'video',
-      constraints: const {
-        'audio': false,
-        'video': {
-          'mandatory': {
-            'minWidth': '320',
-            'minHeight': '240',
-            'maxWidth': '640',
-            'maxHeight': '480',
-          },
-          'facingMode': 'user',
-          'optional': [],
-        },
-      },
-    );
-
-    if (!nativeProbe.available) return nativeProbe;
-
-    sdk.CustomTrack? track;
-
-    try {
-      track = await _createCameraTrack();
-
-      if (track == null) {
-        return const _DeviceProbe.unavailable(
-          label: 'Câmera',
-          reason: 'O VideoSDK não conseguiu criar a trilha de vídeo.',
-        );
-      }
-
-      return const _DeviceProbe.available(label: 'Câmera');
-    } catch (error) {
-      return _DeviceProbe.unavailable(
-        label: 'Câmera',
-        reason: error.toString(),
-      );
-    } finally {
-      await _disposeTrack(track);
-    }
-  }
-
-  Future<_DeviceProbe> _probeMicrophone() async {
-    final nativeProbe = await _probeNativeMediaDevice(
-      label: 'Microfone',
-      expectedKind: 'audio',
-      constraints: const {
-        'audio': true,
-        'video': false,
-      },
-    );
-
-    if (!nativeProbe.available) return nativeProbe;
-
-    sdk.CustomTrack? track;
-
-    try {
-      track = await _createMicrophoneTrack();
-
-      if (track == null) {
-        return const _DeviceProbe.unavailable(
-          label: 'Microfone',
-          reason: 'O VideoSDK não conseguiu criar a trilha de áudio.',
-        );
-      }
-
-      return const _DeviceProbe.available(label: 'Microfone');
-    } catch (error) {
-      return _DeviceProbe.unavailable(
-        label: 'Microfone',
-        reason: error.toString(),
-      );
-    } finally {
-      await _disposeTrack(track);
-    }
-  }
-
   Future<sdk.CustomTrack?> _createCameraTrack() async {
     final track = await sdk.VideoSDK.createCameraVideoTrack(
+      cameraId: _selectedVideoDeviceId,
       encoderConfig: sdk.CustomVideoTrackConfig.h360p_w640p,
       multiStream: true,
     );
@@ -284,102 +256,11 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<sdk.CustomTrack?> _createMicrophoneTrack() async {
     final track = await sdk.VideoSDK.createMicrophoneAudioTrack(
+      microphoneId: _selectedAudioInputDeviceId,
       encoderConfig: sdk.CustomAudioTrackConfig.speech_standard,
     );
 
     return track is sdk.CustomTrack ? track : null;
-  }
-
-  Future<void> _disposeTrack(sdk.CustomTrack? track) async {
-    if (track == null) return;
-
-    try {
-      await track.dispose();
-    } catch (_) {}
-  }
-
-  Future<_DeviceProbe> _probeNativeMediaDevice({
-    required String label,
-    required String expectedKind,
-    required Map<String, dynamic> constraints,
-  }) async {
-    webrtc.MediaStream? stream;
-    webrtc.RTCVideoRenderer? previewRenderer;
-
-    try {
-      stream = await webrtc.navigator.mediaDevices
-          .getUserMedia(constraints)
-          .timeout(const Duration(seconds: 7));
-
-      final tracks = expectedKind == 'video'
-          ? stream.getVideoTracks()
-          : stream.getAudioTracks();
-
-      if (tracks.isEmpty) {
-        return _DeviceProbe.unavailable(
-          label: label,
-          reason:
-              'O sistema permitiu abrir o dispositivo, mas nenhuma trilha $expectedKind foi retornada.',
-        );
-      }
-
-      if (expectedKind == 'video') {
-        previewRenderer = webrtc.RTCVideoRenderer();
-        await previewRenderer.initialize();
-
-        final firstFrame = Completer<void>();
-        previewRenderer.onFirstFrameRendered = () {
-          if (!firstFrame.isCompleted) firstFrame.complete();
-        };
-        previewRenderer.srcObject = stream;
-
-        if (previewRenderer.videoWidth <= 0 ||
-            previewRenderer.videoHeight <= 0) {
-          await firstFrame.future.timeout(const Duration(seconds: 4));
-        }
-
-        if (previewRenderer.videoWidth <= 0 ||
-            previewRenderer.videoHeight <= 0 ||
-            !previewRenderer.renderVideo) {
-          return _DeviceProbe.unavailable(
-            label: label,
-            reason:
-                'A câmera foi aberta, mas nenhum frame de vídeo foi renderizado. Pode haver concorrência de uso ou bloqueio do driver.',
-          );
-        }
-      }
-
-      return _DeviceProbe.available(
-        label: label,
-        reason: 'getUserMedia direto validado com sucesso.',
-      );
-    } on TimeoutException {
-      return _DeviceProbe.unavailable(
-        label: label,
-        reason:
-            'Tempo esgotado ao tentar abrir/renderizar o dispositivo. Ele pode estar ocupado por outro aplicativo.',
-      );
-    } catch (error) {
-      return _DeviceProbe.unavailable(
-        label: label,
-        reason: error.toString(),
-      );
-    } finally {
-      final tracks = stream?.getTracks() ?? const <webrtc.MediaStreamTrack>[];
-      for (final track in tracks) {
-        try {
-          await track.stop();
-        } catch (_) {}
-      }
-
-      try {
-        await stream?.dispose();
-      } catch (_) {}
-
-      try {
-        await previewRenderer?.dispose();
-      } catch (_) {}
-    }
   }
 
   void _showDeviceWarning(String message) {
@@ -554,21 +435,133 @@ class _CallScreenState extends State<CallScreen> {
     return result;
   }
 
-  void _joinRoom({
+  Future<void> _loadMediaDevices() async {
+    if (!mounted) return;
+
+    setState(() => _devicesLoading = true);
+
+    try {
+      final videoDevices = await sdk.VideoSDK.getVideoDevices();
+      final audioDevices = await sdk.VideoSDK.getAudioDevices();
+      final videos = (videoDevices ?? [])
+          .where((device) => device.deviceId.isNotEmpty)
+          .toList();
+      final audioInputs = (audioDevices ?? [])
+          .where(
+            (device) =>
+                device.kind == 'audioinput' && device.deviceId.isNotEmpty,
+          )
+          .toList();
+      final audioOutputs = (audioDevices ?? [])
+          .where(
+            (device) =>
+                device.kind == 'audiooutput' && device.deviceId.isNotEmpty,
+          )
+          .toList();
+      final preferences = await _devicePreferences.load(widget.slug);
+
+      if (!mounted) return;
+      setState(() {
+        _videoDevices = videos;
+        _audioInputDevices = audioInputs;
+        _audioOutputDevices = audioOutputs;
+        _selectedVideoDeviceId = _resolveSelectedDeviceId(
+          currentId: _selectedVideoDeviceId ?? preferences.videoDeviceId,
+          deviceIds: _videoDevices.map((device) => device.deviceId),
+        );
+        _selectedAudioInputDeviceId = _resolveSelectedDeviceId(
+          currentId:
+              _selectedAudioInputDeviceId ?? preferences.audioInputDeviceId,
+          deviceIds: _audioInputDevices.map((device) => device.deviceId),
+        );
+        _selectedAudioOutputDeviceId = _resolveSelectedDeviceId(
+          currentId:
+              _selectedAudioOutputDeviceId ?? preferences.audioOutputDeviceId,
+          deviceIds: _audioOutputDevices.map((device) => device.deviceId),
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Não foi possível carregar os dispositivos: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _devicesLoading = false);
+    }
+  }
+
+  String? _resolveSelectedDeviceId({
+    required String? currentId,
+    required Iterable<String> deviceIds,
+  }) {
+    final ids = deviceIds.where((id) => id.isNotEmpty).toList();
+    if (currentId != null && ids.contains(currentId)) return currentId;
+    return ids.isEmpty ? null : ids.first;
+  }
+
+  Future<void> _joinRoom({
     required String meetingId,
     required String token,
     required String displayName,
-  }) {
+  }) async {
     _leaveRoom();
+
+    sdk.CustomTrack? cameraTrack;
+    sdk.CustomTrack? microphoneTrack;
+    var cameraEnabled = _cameraEnabled;
+    var microphoneEnabled = _microphoneEnabled;
+
+    if (cameraEnabled) {
+      try {
+        cameraTrack = await _createCameraTrack();
+        cameraEnabled = cameraTrack != null;
+      } catch (error) {
+        cameraEnabled = false;
+        if (mounted) {
+          await _warnMediaToggleFailure(
+            deviceLabel: 'Câmera',
+            reason: error.toString(),
+          );
+        }
+      }
+    }
+
+    if (microphoneEnabled) {
+      try {
+        microphoneTrack = await _createMicrophoneTrack();
+        microphoneEnabled = microphoneTrack != null;
+      } catch (error) {
+        microphoneEnabled = false;
+        if (mounted) {
+          await _warnMediaToggleFailure(
+            deviceLabel: 'Microfone',
+            reason: error.toString(),
+          );
+        }
+      }
+    }
+
+    if (mounted &&
+        (_cameraEnabled != cameraEnabled ||
+            _microphoneEnabled != microphoneEnabled)) {
+      setState(() {
+        _cameraEnabled = cameraEnabled;
+        _microphoneEnabled = microphoneEnabled;
+      });
+    }
 
     final room = sdk.VideoSDK.createRoom(
       roomId: meetingId,
       token: token,
       displayName: displayName,
-      micEnabled: _microphoneEnabled,
-      camEnabled: _cameraEnabled,
+      micEnabled: microphoneEnabled,
+      camEnabled: cameraEnabled,
       maxResolution: 'hd',
       multiStream: true,
+      customCameraVideoTrack: cameraTrack,
+      customMicrophoneAudioTrack: microphoneTrack,
       mode: sdk.Mode.SEND_AND_RECV,
       debugMode: false,
       notification: const sdk.NotificationInfo(
@@ -696,6 +689,12 @@ class _CallScreenState extends State<CallScreen> {
         _chatOpen = true;
         _unreadChatMessages = 0;
         _roomState = 'Conectado';
+        _selectedVideoDeviceId =
+            room.selectedCam?.deviceId ?? _selectedVideoDeviceId;
+        _selectedAudioInputDeviceId =
+            room.selectedMic?.deviceId ?? _selectedAudioInputDeviceId;
+        _selectedAudioOutputDeviceId =
+            room.selectedSpeaker?.deviceId ?? _selectedAudioOutputDeviceId;
         _remoteParticipants
           ..clear()
           ..addAll(room.participants);
@@ -835,23 +834,17 @@ class _CallScreenState extends State<CallScreen> {
     if (_microphoneEnabled) {
       await room.muteMic();
     } else {
-      final probe = await _probeNativeMediaDevice(
-        label: 'Microfone',
-        expectedKind: 'audio',
-        constraints: const {
-          'audio': true,
-          'video': false,
-        },
-      );
-      if (!probe.available) {
+      sdk.CustomTrack? track;
+      try {
+        track = await _createMicrophoneTrack();
+      } catch (error) {
         await _warnMediaToggleFailure(
           deviceLabel: 'Microfone',
-          reason: probe.reason,
+          reason: error.toString(),
         );
         return;
       }
 
-      final track = await _createMicrophoneTrack();
       if (track == null) {
         await _warnMediaToggleFailure(
           deviceLabel: 'Microfone',
@@ -876,32 +869,17 @@ class _CallScreenState extends State<CallScreen> {
     if (_cameraEnabled) {
       await room.disableCam();
     } else {
-      final probe = await _probeNativeMediaDevice(
-        label: 'Câmera',
-        expectedKind: 'video',
-        constraints: const {
-          'audio': false,
-          'video': {
-            'mandatory': {
-              'minWidth': '320',
-              'minHeight': '240',
-              'maxWidth': '640',
-              'maxHeight': '480',
-            },
-            'facingMode': 'user',
-            'optional': [],
-          },
-        },
-      );
-      if (!probe.available) {
+      sdk.CustomTrack? track;
+      try {
+        track = await _createCameraTrack();
+      } catch (error) {
         await _warnMediaToggleFailure(
           deviceLabel: 'Câmera',
-          reason: probe.reason,
+          reason: error.toString(),
         );
         return;
       }
 
-      final track = await _createCameraTrack();
       if (track == null) {
         await _warnMediaToggleFailure(
           deviceLabel: 'Câmera',
@@ -923,9 +901,373 @@ class _CallScreenState extends State<CallScreen> {
     setState(() => _speakerEnabled = !_speakerEnabled);
   }
 
+  Future<void> _changeCamera(String? deviceId) async {
+    final room = _room;
+    if (deviceId == null || deviceId == _selectedVideoDeviceId) {
+      return;
+    }
+
+    final device = _findVideoDevice(deviceId);
+    if (device == null) return;
+
+    if (room == null || !_joined) {
+      setState(() => _selectedVideoDeviceId = device.deviceId);
+      await _devicePreferences.saveVideoDeviceId(widget.slug, device.deviceId);
+      return;
+    }
+
+    await _runDeviceSwitch(
+      successState: () {
+        _selectedVideoDeviceId = device.deviceId;
+        _cameraEnabled = true;
+      },
+      action: () async {
+        await room.changeCam(device);
+        await _devicePreferences.saveVideoDeviceId(
+          widget.slug,
+          device.deviceId,
+        );
+        _scheduleLocalMediaWatchdog('camera_changed');
+      },
+      errorLabel: 'câmera',
+    );
+  }
+
+  Future<void> _changeMicrophone(String? deviceId) async {
+    final room = _room;
+    if (deviceId == null || deviceId == _selectedAudioInputDeviceId) {
+      return;
+    }
+
+    final device = _findAudioInputDevice(deviceId);
+    if (device == null) return;
+
+    if (room == null || !_joined) {
+      setState(() => _selectedAudioInputDeviceId = device.deviceId);
+      await _devicePreferences.saveAudioInputDeviceId(
+        widget.slug,
+        device.deviceId,
+      );
+      return;
+    }
+
+    await _runDeviceSwitch(
+      successState: () {
+        _selectedAudioInputDeviceId = device.deviceId;
+        _microphoneEnabled = true;
+      },
+      action: () async {
+        await room.changeMic(device);
+        await _devicePreferences.saveAudioInputDeviceId(
+          widget.slug,
+          device.deviceId,
+        );
+        _scheduleLocalMediaWatchdog('microphone_changed');
+      },
+      errorLabel: 'microfone',
+    );
+  }
+
+  Future<void> _changeAudioOutput(String? deviceId) async {
+    final room = _room;
+    if (deviceId == null || deviceId == _selectedAudioOutputDeviceId) {
+      return;
+    }
+
+    final device = _findAudioOutputDevice(deviceId);
+    if (device == null) return;
+
+    if (room == null || !_joined) {
+      setState(() => _selectedAudioOutputDeviceId = device.deviceId);
+      await _devicePreferences.saveAudioOutputDeviceId(
+        widget.slug,
+        device.deviceId,
+      );
+      return;
+    }
+
+    await _runDeviceSwitch(
+      successState: () {
+        _selectedAudioOutputDeviceId = device.deviceId;
+        _speakerEnabled = true;
+      },
+      action: () async {
+        await room.switchAudioDevice(device);
+        await _devicePreferences.saveAudioOutputDeviceId(
+          widget.slug,
+          device.deviceId,
+        );
+      },
+      errorLabel: 'saída de áudio',
+    );
+  }
+
+  Future<void> _runDeviceSwitch({
+    required Future<void> Function() action,
+    required VoidCallback successState,
+    required String errorLabel,
+  }) async {
+    if (_deviceSwitching) return;
+
+    setState(() => _deviceSwitching = true);
+    try {
+      await action();
+      if (!mounted) return;
+      setState(successState);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Não foi possível trocar $errorLabel: $error'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _deviceSwitching = false);
+    }
+  }
+
+  sdk.VideoDeviceInfo? _findVideoDevice(String deviceId) {
+    for (final device in _videoDevices) {
+      if (device.deviceId == deviceId) return device;
+    }
+    return null;
+  }
+
+  sdk.AudioDeviceInfo? _findAudioInputDevice(String deviceId) {
+    for (final device in _audioInputDevices) {
+      if (device.deviceId == deviceId) return device;
+    }
+    return null;
+  }
+
+  sdk.AudioDeviceInfo? _findAudioOutputDevice(String deviceId) {
+    for (final device in _audioOutputDevices) {
+      if (device.deviceId == deviceId) return device;
+    }
+    return null;
+  }
+
+  Future<void> _showDeviceSettings() async {
+    if (_videoDevices.isEmpty &&
+        _audioInputDevices.isEmpty &&
+        _audioOutputDevices.isEmpty) {
+      await _loadMediaDevices();
+    }
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (modalContext) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> refreshDevices() async {
+              await _loadMediaDevices();
+              if (context.mounted) setModalState(() {});
+            }
+
+            Future<void> changeDevice(Future<void> Function() action) async {
+              await action();
+              if (context.mounted) setModalState(() {});
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.settings_input_component_outlined),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'Dispositivos da chamada',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Atualizar dispositivos',
+                            onPressed: _devicesLoading ? null : refreshDevices,
+                            icon: _devicesLoading
+                                ? const SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.refresh),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _DeviceDropdown(
+                        label: 'Câmera',
+                        icon: Icons.videocam_outlined,
+                        value: _selectedVideoDeviceId,
+                        devices: _videoDevices
+                            .map(
+                              (device) => _CallDeviceOption(
+                                id: device.deviceId,
+                                label: device.label,
+                              ),
+                            )
+                            .toList(),
+                        enabled: !_deviceSwitching,
+                        onChanged: (deviceId) => changeDevice(
+                          () => _changeCamera(deviceId),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _DeviceDropdown(
+                        label: 'Microfone',
+                        icon: Icons.mic_none_outlined,
+                        value: _selectedAudioInputDeviceId,
+                        devices: _audioInputDevices
+                            .map(
+                              (device) => _CallDeviceOption(
+                                id: device.deviceId,
+                                label: device.label,
+                              ),
+                            )
+                            .toList(),
+                        enabled: !_deviceSwitching,
+                        onChanged: (deviceId) => changeDevice(
+                          () => _changeMicrophone(deviceId),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _DeviceDropdown(
+                        label: 'Saída de áudio',
+                        icon: Icons.volume_up_outlined,
+                        value: _selectedAudioOutputDeviceId,
+                        devices: _audioOutputDevices
+                            .map(
+                              (device) => _CallDeviceOption(
+                                id: device.deviceId,
+                                label: device.label,
+                              ),
+                            )
+                            .toList(),
+                        enabled: !_deviceSwitching,
+                        onChanged: (deviceId) => changeDevice(
+                          () => _changeAudioOutput(deviceId),
+                        ),
+                      ),
+                      if (_deviceSwitching) ...[
+                        const SizedBox(height: 14),
+                        const LinearProgressIndicator(),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _togglePictureInPicture() async {
+    if (_pictureInPicture) {
+      await _restoreWindowFromPictureInPicture();
+    } else {
+      await _enterPictureInPicture();
+    }
+  }
+
+  Future<void> _enterPictureInPicture({bool focusWindow = true}) async {
+    if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux) return;
+
+    try {
+      final bounds = await windowManager.getBounds();
+      final wasMaximized = await windowManager.isMaximized();
+
+      if (wasMaximized) {
+        await windowManager.unmaximize();
+      }
+
+      await windowManager.setMinimumSize(const Size(620, 460));
+      await windowManager.setSize(const Size(680, 520));
+      await windowManager.setAlignment(Alignment.bottomRight);
+      await windowManager.setAlwaysOnTop(true);
+      if (focusWindow) {
+        await windowManager.focus();
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _pictureInPicture = true;
+        _windowBoundsBeforePip = bounds;
+        _windowWasMaximized = wasMaximized;
+        _chatOpen = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Não foi possível ativar o miniplayer: $error'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _restoreWindowFromPictureInPicture() async {
+    if (!_pictureInPicture &&
+        _windowBoundsBeforePip == null &&
+        !_windowWasMaximized) {
+      return;
+    }
+
+    final bounds = _windowBoundsBeforePip;
+    final wasMaximized = _windowWasMaximized;
+
+    if (mounted) {
+      setState(() {
+        _pictureInPicture = false;
+        _windowBoundsBeforePip = null;
+        _windowWasMaximized = false;
+      });
+    } else {
+      _pictureInPicture = false;
+      _windowBoundsBeforePip = null;
+      _windowWasMaximized = false;
+    }
+
+    if (!Platform.isWindows && !Platform.isMacOS && !Platform.isLinux) return;
+
+    try {
+      await windowManager.setAlwaysOnTop(false);
+      await windowManager.setMinimumSize(const Size(900, 600));
+
+      if (wasMaximized) {
+        await windowManager.maximize();
+      } else if (bounds != null) {
+        await windowManager.setBounds(bounds);
+      } else {
+        await windowManager.setSize(const Size(1200, 800));
+        await windowManager.center();
+      }
+
+      await windowManager.focus();
+    } catch (_) {}
+  }
+
   Future<void> _finishCall(BuildContext context) async {
     final controller = context.read<CallController>();
 
+    await _restoreWindowFromPictureInPicture();
     _leaveRoom();
 
     try {
@@ -976,7 +1318,19 @@ class _CallScreenState extends State<CallScreen> {
       title: title,
       slug: widget.slug,
       currentRoute: 'call',
+      navigationLocked: _joining || _joined || _room != null,
+      navigationLockedMessage:
+          'Encerre a chamada antes de navegar para outra tela.',
       actions: [
+        IconButton(
+          tooltip: _pictureInPicture ? 'Sair do miniplayer' : 'Miniplayer',
+          onPressed: _room == null || !_joined ? null : _togglePictureInPicture,
+          icon: Icon(
+            _pictureInPicture
+                ? Icons.open_in_full_outlined
+                : Icons.picture_in_picture_alt_outlined,
+          ),
+        ),
         IconButton(
           tooltip: 'Reconectar',
           onPressed: _joining ? null : _startCallFlow,
@@ -986,25 +1340,29 @@ class _CallScreenState extends State<CallScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _callHeader(controller),
-          const SizedBox(height: 12),
+          if (!_pictureInPicture) ...[
+            _callHeader(controller),
+            const SizedBox(height: 12),
+          ],
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _stage()),
-                if (_chatOpen) ...[
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 340,
-                    child: _chatPanel(),
+            child: _pictureInPicture
+                ? _stage()
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: _stage()),
+                      if (_chatOpen) ...[
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 340,
+                          child: _chatPanel(),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-              ],
-            ),
           ),
-          const SizedBox(height: 16),
-          _toolbar(controller),
+          SizedBox(height: _pictureInPicture ? 10 : 16),
+          _toolbar(controller, compact: _pictureInPicture),
         ],
       ),
     );
@@ -1042,6 +1400,11 @@ class _CallScreenState extends State<CallScreen> {
             _InfoChip(
               icon: _joined ? Icons.wifi : Icons.wifi_off,
               label: _roomState,
+            ),
+            IconButton.filledTonal(
+              tooltip: 'Configurar câmera e microfone',
+              onPressed: _devicesLoading ? null : _showDeviceSettings,
+              icon: const Icon(Icons.settings_input_component_outlined),
             ),
             if (_joining || controller.loading)
               const SizedBox(
@@ -1340,9 +1703,10 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
-  Widget _toolbar(CallController controller) {
+  Widget _toolbar(CallController controller, {bool compact = false}) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisAlignment:
+          compact ? MainAxisAlignment.center : MainAxisAlignment.center,
       children: [
         _RoundCallButton(
           tooltip:
@@ -1374,6 +1738,13 @@ class _CallScreenState extends State<CallScreen> {
           active: _chatOpen,
           badgeCount: _unreadChatMessages,
           onPressed: _joined ? _toggleChat : null,
+        ),
+        const SizedBox(width: 12),
+        _RoundCallButton(
+          tooltip: 'Dispositivos',
+          icon: Icons.settings_input_component_outlined,
+          active: true,
+          onPressed: _room == null || !_joined ? null : _showDeviceSettings,
         ),
         const SizedBox(width: 22),
         FilledButton.icon(
@@ -1501,10 +1872,9 @@ class _DeviceProbe {
   final bool available;
   final String reason;
 
-  const _DeviceProbe.available({
-    required this.label,
-    this.reason = 'ok',
-  }) : available = true;
+  const _DeviceProbe.available({required this.label})
+      : available = true,
+        reason = 'ok';
 
   const _DeviceProbe.unavailable({
     required this.label,
@@ -1521,6 +1891,71 @@ class _DeviceProbe {
   }
 
   bool get suspectedConcurrency => _isPossibleDeviceConcurrency(reason);
+}
+
+class _CallDeviceOption {
+  final String id;
+  final String label;
+
+  const _CallDeviceOption({
+    required this.id,
+    required this.label,
+  });
+}
+
+class _DeviceDropdown extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final String? value;
+  final List<_CallDeviceOption> devices;
+  final bool enabled;
+  final ValueChanged<String?> onChanged;
+
+  const _DeviceDropdown({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.devices,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final deviceIds = devices.map((device) => device.id).toSet();
+    final selectedValue = value != null && deviceIds.contains(value)
+        ? value
+        : devices.isEmpty
+            ? null
+            : devices.first.id;
+
+    return DropdownButtonFormField<String>(
+      initialValue: selectedValue,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+      items: devices.isEmpty
+          ? const []
+          : [
+              for (var i = 0; i < devices.length; i++)
+                DropdownMenuItem(
+                  value: devices[i].id,
+                  child: Text(
+                    devices[i].label.trim().isEmpty
+                        ? '$label ${i + 1}'
+                        : devices[i].label,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+      hint: Text('Nenhum dispositivo encontrado'),
+      onChanged: enabled && devices.isNotEmpty ? onChanged : null,
+    );
+  }
 }
 
 class _ChatBubble extends StatelessWidget {
@@ -1669,7 +2104,8 @@ class _ParticipantVideoTileState extends State<_ParticipantVideoTile> {
               sdk.RTCVideoView(
                 renderer,
                 mirror: widget.mirror,
-                objectFit: sdk.RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                objectFit:
+                    sdk.RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
               )
             else
               Center(

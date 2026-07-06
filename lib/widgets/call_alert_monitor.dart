@@ -89,6 +89,15 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
     final tray = context.read<AppTrayService>();
 
     try {
+      if (_isInCallRoute()) {
+        await queue.soundService.stop();
+        await tray.clearWaitingCalls();
+        _knownCallIds = {};
+        _firstCheck = true;
+        if (mounted) _hideSnackBarSafely();
+        return;
+      }
+
       await queue.refresh(slug: _activeSlug!, enableAlerts: false);
 
       if (!mounted) return;
@@ -98,7 +107,6 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
       final newCallIds = currentCallIds.difference(_knownCallIds);
       final hasCalls = currentCallIds.isNotEmpty;
       final shouldAlert = _firstCheck ? hasCalls : newCallIds.isNotEmpty;
-      final isInCallRoute = _isInCallRoute();
 
       if (hasCalls) {
         await queue.soundService.startContinuousAlert();
@@ -115,7 +123,7 @@ class _CallAlertMonitorState extends State<CallAlertMonitor> {
         _hideSnackBarSafely();
       }
 
-      if (shouldAlert && !isInCallRoute) {
+      if (shouldAlert) {
         try {
           await queue.notificationService
               .showNewCall(count: queue.calls.length);
