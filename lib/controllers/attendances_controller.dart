@@ -27,6 +27,7 @@ class AttendancesController extends ChangeNotifier {
   Future<void> load({required String slug, int page = 1}) async {
     loading = true;
     error = null;
+    calls = [];
     notifyListeners();
 
     try {
@@ -49,6 +50,7 @@ class AttendancesController extends ChangeNotifier {
   Future<void> refresh({required String slug}) async {
     loading = true;
     error = null;
+    calls = [];
     notifyListeners();
 
     try {

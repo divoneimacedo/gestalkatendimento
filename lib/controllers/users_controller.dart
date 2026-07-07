@@ -35,6 +35,7 @@ class UsersController extends ChangeNotifier {
 
     loading = true;
     error = null;
+    users = [];
     notifyListeners();
 
     try {

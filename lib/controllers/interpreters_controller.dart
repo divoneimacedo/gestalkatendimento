@@ -30,6 +30,7 @@ class InterpretersController extends ChangeNotifier {
 
     loading = true;
     error = null;
+    interpreters = [];
     notifyListeners();
 
     try {

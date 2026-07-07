@@ -30,6 +30,7 @@ class ChannelsController extends ChangeNotifier {
 
     loading = true;
     error = null;
+    channels = [];
     notifyListeners();
 
     try {

@@ -32,6 +32,7 @@ class CompaniesController extends ChangeNotifier {
 
     loading = true;
     error = null;
+    companies = [];
     notifyListeners();
 
     try {

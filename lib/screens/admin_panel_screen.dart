@@ -159,6 +159,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     setState(() {
       _loadingUsers = true;
       _usersError = null;
+      _users = [];
     });
     try {
       final result = await _usersService.fetchUsers(
@@ -189,6 +190,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     setState(() {
       _loadingProfiles = true;
       _profilesError = null;
+      _profiles = [];
     });
     try {
       final profiles = await _adminService.fetchProfiles();
@@ -206,6 +208,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     setState(() {
       _loadingQueues = true;
       _queuesError = null;
+      _serviceTypes = [];
     });
     try {
       final companiesResult = _companies.isEmpty

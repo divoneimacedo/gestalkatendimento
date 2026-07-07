@@ -28,6 +28,7 @@ class PlansController extends ChangeNotifier {
 
     loading = true;
     error = null;
+    plans = [];
     notifyListeners();
 
     try {

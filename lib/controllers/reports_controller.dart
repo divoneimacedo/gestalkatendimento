@@ -51,6 +51,7 @@ class ReportsController extends ChangeNotifier {
 
     loading = true;
     error = null;
+    calls = [];
     notifyListeners();
 
     try {
