@@ -234,8 +234,8 @@ class _CompaniesTable extends StatefulWidget {
   static const headerHeight = 54.0;
   static const actionsWidth = 178.0;
   static const columns = [
-    _ColumnSpec('ID', 100),
-    _ColumnSpec('Nome', 260, flexGrow: 1),
+    _ColumnSpec('ID', 210),
+    _ColumnSpec('Nome', 150, flexGrow: 1),
     _ColumnSpec('Logo', 90),
     _ColumnSpec('Status', 120),
   ];

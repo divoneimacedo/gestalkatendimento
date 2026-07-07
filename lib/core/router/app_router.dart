@@ -10,6 +10,7 @@ import '../../screens/attendances_screen.dart';
 import '../../screens/channel_form_screen.dart';
 import '../../screens/channels_screen.dart';
 import '../../screens/call_screen.dart';
+import '../../screens/call_details_screen.dart';
 import '../../screens/call_review_screen.dart';
 import '../../screens/companies_screen.dart';
 import '../../screens/company_form_screen.dart';
@@ -205,6 +206,13 @@ class AppRouter {
           path: '/about/:slug',
           builder: (_, state) => AboutScreen(
             slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+          ),
+        ),
+        GoRoute(
+          path: '/call-details/:slug/:id',
+          builder: (_, state) => CallDetailsScreen(
+            slug: state.pathParameters['slug'] ?? AppConfig.defaultSlug,
+            callId: state.pathParameters['id'] ?? '',
           ),
         ),
         GoRoute(

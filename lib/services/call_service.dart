@@ -11,7 +11,10 @@ class CallService {
     final data = response.data;
 
     if (data is Map && data['call'] is Map) {
-      return CallDetails.fromJson(Map<String, dynamic>.from(data['call']));
+      return CallDetails.fromJson(
+        Map<String, dynamic>.from(data['call']),
+        reviews: data['reviews'],
+      );
     }
 
     if (data is Map) {
@@ -25,6 +28,12 @@ class CallService {
       meetingId: '',
       status: '',
     );
+  }
+
+  Future<List<CallRecording>> getRecordings(String callId) async {
+    final response =
+        await apiService.dio.get<dynamic>('/calls/$callId/recording');
+    return callRecordingsFromResponse(response.data);
   }
 
   Future<void> finish(String callId) async {

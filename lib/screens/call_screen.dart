@@ -17,11 +17,15 @@ import '../widgets/app_shell.dart';
 class CallScreen extends StatefulWidget {
   final String slug;
   final String callId;
+  final bool embedded;
+  final VoidCallback? onClosed;
 
   const CallScreen({
     super.key,
     required this.slug,
     required this.callId,
+    this.embedded = false,
+    this.onClosed,
   });
 
   @override
@@ -1285,6 +1289,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
     }
 
     if (context.mounted) {
+      widget.onClosed?.call();
       final protocol = controller.currentCall?.protocol ?? '';
       final encodedProtocol = Uri.encodeComponent(protocol);
       context.go(

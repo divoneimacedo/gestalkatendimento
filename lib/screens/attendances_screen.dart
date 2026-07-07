@@ -79,7 +79,7 @@ class _AttendancesScreenState extends State<AttendancesScreen> {
                       calls: controller.calls,
                       isAdmin: isAdmin,
                       onOpen: (call) =>
-                          context.go('/call/${widget.slug}/${call.id}'),
+                          context.go('/call-details/${widget.slug}/${call.id}'),
                     ),
                   if (controller.loading && controller.calls.isNotEmpty)
                     Positioned.fill(
@@ -264,12 +264,12 @@ class _AttendancesTable extends StatefulWidget {
   static const headerHeight = 48.0;
   static const actionsWidth = 104.0;
   static const columns = [
-    _ColumnSpec('ID', 80),
-    _ColumnSpec('Protocolo', 120),
-    _ColumnSpec('Status', 140),
-    _ColumnSpec('Canal', 160),
-    _ColumnSpec('Hora de entrada', 140),
-    _ColumnSpec('Encerramento', 140),
+    _ColumnSpec('ID', 190),
+    _ColumnSpec('Protocolo', 100),
+    _ColumnSpec('Status', 100),
+    _ColumnSpec('Canal', 220),
+    _ColumnSpec('Hora de entrada', 170),
+    _ColumnSpec('Encerramento', 170),
   ];
 
   final List<AttendanceCall> calls;
@@ -364,11 +364,25 @@ class _AttendancesTableState extends State<_AttendancesTable> {
   ) {
     if (availableExtra <= 0) return columns;
 
+    const weights = {
+      'Protocolo': 0.6,
+      'Status': 0.6,
+      'Canal': 1.5,
+      'Hora de entrada': 1.2,
+      'Encerramento': 1.2,
+    };
+    final totalWeight = weights.values.fold<double>(
+      0,
+      (sum, weight) => sum + weight,
+    );
+
     return [
       for (final column in columns)
-        column.title == 'Canal'
-            ? _ColumnSpec(column.title, column.width + availableExtra)
-            : column,
+        _ColumnSpec(
+          column.title,
+          column.width +
+              (availableExtra * (weights[column.title] ?? 0) / totalWeight),
+        ),
     ];
   }
 
@@ -577,7 +591,7 @@ class _CallActionRow extends StatelessWidget {
       color: index.isEven ? const Color(0xFFF7FAFA) : Colors.white,
       alignment: Alignment.center,
       child: Tooltip(
-        message: 'Abrir atendimento',
+        message: 'Ver detalhes',
         child: IconButton.filledTonal(
           onPressed: () => onOpen(call),
           icon: const Icon(Icons.open_in_new, size: 18),
