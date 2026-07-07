@@ -1,7 +1,7 @@
 name: gestalk_flutter_desktop
 description: Base inicial Flutter Desktop para atendimento por video da Gestalk.
 publish_to: 'none'
-version: 1.0.6+1
+version: 1.0.7+1
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
