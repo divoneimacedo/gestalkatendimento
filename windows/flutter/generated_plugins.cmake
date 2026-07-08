@@ -6,6 +6,8 @@ list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   file_selector_windows
   local_notifier
+  media_kit_libs_windows_video
+  media_kit_video
   permission_handler_windows
   printing
   screen_retriever_windows

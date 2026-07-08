@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -329,24 +333,9 @@ class _RecordingCard extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 640),
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1F2130),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Center(
-                    child: Icon(
-                      hasFile
-                          ? Icons.play_circle_fill
-                          : Icons.videocam_off_outlined,
-                      color: Colors.white.withValues(alpha: 0.82),
-                      size: 54,
-                    ),
-                  ),
-                ),
-              ),
+              child: hasFile
+                  ? _RecordingVideoPlayer(url: fileUrl)
+                  : const _RecordingPlaceholder(),
             ),
           ),
           const SizedBox(height: 12),
@@ -361,13 +350,12 @@ class _RecordingCard extends StatelessWidget {
                   icon: const Icon(Icons.open_in_new, size: 18),
                   label: const Text('Abrir vídeo'),
                 ),
-                FilledButton.tonalIcon(
-                  onPressed: hasFile ? () => _openUrl(context, fileUrl) : null,
-                  icon: const Icon(Icons.download, size: 18),
-                  label: Text(
-                    'Baixar vídeo (${_formatSeconds(file?.durationSeconds ?? 0)})',
+                if (hasFile)
+                  _DownloadVideoButton(
+                    url: fileUrl,
+                    suggestedName: _recordingFileName(recording),
+                    durationText: _formatSeconds(file?.durationSeconds ?? 0),
                   ),
-                ),
               ],
             ),
           ),
@@ -388,6 +376,225 @@ class _RecordingCard extends StatelessWidget {
     if (!opened && context.mounted) {
       _showMessage(context, 'Não foi possível abrir a gravação.');
     }
+  }
+}
+
+class _DownloadVideoButton extends StatefulWidget {
+  final String url;
+  final String suggestedName;
+  final String durationText;
+
+  const _DownloadVideoButton({
+    required this.url,
+    required this.suggestedName,
+    required this.durationText,
+  });
+
+  @override
+  State<_DownloadVideoButton> createState() => _DownloadVideoButtonState();
+}
+
+class _DownloadVideoButtonState extends State<_DownloadVideoButton> {
+  final Dio _dio = Dio();
+  bool _downloading = false;
+  double _progress = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.tonalIcon(
+      onPressed: _downloading ? null : _download,
+      icon: _downloading
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                value: _progress > 0 && _progress < 1 ? _progress : null,
+              ),
+            )
+          : const Icon(Icons.download, size: 18),
+      label: Text(
+        _downloading
+            ? 'Baixando ${(_progress * 100).clamp(0, 100).round()}%'
+            : 'Baixar vídeo (${widget.durationText})',
+      ),
+    );
+  }
+
+  Future<void> _download() async {
+    final location = await getSaveLocation(
+      suggestedName: widget.suggestedName,
+      acceptedTypeGroups: const [
+        XTypeGroup(
+          label: 'Vídeo MP4',
+          extensions: ['mp4'],
+          mimeTypes: ['video/mp4'],
+        ),
+      ],
+    );
+
+    if (location == null) return;
+
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+    });
+
+    try {
+      await _dio.download(
+        widget.url,
+        location.path,
+        options: Options(responseType: ResponseType.bytes),
+        onReceiveProgress: (received, total) {
+          if (!mounted || total <= 0) return;
+          setState(() => _progress = received / total);
+        },
+      );
+
+      if (!mounted) return;
+      _showMessage(context, 'Vídeo salvo em: ${location.path}');
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage(context, 'Não foi possível baixar o vídeo.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _progress = 0;
+        });
+      }
+    }
+  }
+}
+
+class _RecordingVideoPlayer extends StatefulWidget {
+  final String url;
+
+  const _RecordingVideoPlayer({required this.url});
+
+  @override
+  State<_RecordingVideoPlayer> createState() => _RecordingVideoPlayerState();
+}
+
+class _RecordingVideoPlayerState extends State<_RecordingVideoPlayer> {
+  late final Player _player;
+  late final VideoController _controller;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _player = Player();
+    _controller = VideoController(_player);
+    _open();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RecordingVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url) {
+      _open();
+    }
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _open() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      await _player.open(Media(widget.url), play: false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Não foi possível carregar o vídeo no player.';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: ColoredBox(
+          color: const Color(0xFF1F2130),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              if (_error == null) Video(controller: _controller),
+              if (_loading)
+                const Center(
+                  child: CircularProgressIndicator(color: Colors.white),
+                ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.videocam_off_outlined,
+                        color: Colors.white.withValues(alpha: 0.82),
+                        size: 46,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.tonalIcon(
+                        onPressed: _open,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Tentar novamente'),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecordingPlaceholder extends StatelessWidget {
+  const _RecordingPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return AspectRatio(
+      aspectRatio: 16 / 9,
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF1F2130),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Center(
+          child: Icon(
+            Icons.videocam_off_outlined,
+            color: Colors.white.withValues(alpha: 0.82),
+            size: 54,
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -690,6 +897,16 @@ String _formatSeconds(int seconds) {
   if (remainingSeconds == 0) return '${minutes}m';
 
   return '${minutes}m ${remainingSeconds}s';
+}
+
+String _recordingFileName(CallRecording recording) {
+  final date = recording.createdAt;
+  final suffix = date == null
+      ? DateTime.now().millisecondsSinceEpoch.toString()
+      : DateFormat('yyyyMMdd_HHmmss').format(date.toLocal());
+  final id = recording.id.isEmpty ? 'gravacao' : recording.id;
+
+  return 'atendimento_${id}_$suffix.mp4';
 }
 
 void _showMessage(BuildContext context, String message) {
