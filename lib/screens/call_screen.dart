@@ -54,7 +54,9 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
   bool _pictureInPicture = false;
   bool _enteringPictureInPicture = false;
   bool _windowWasMaximized = false;
+  bool _microphoneRecoveryPending = false;
   int _unreadChatMessages = 0;
+  int _microphoneRecoveryAttempts = 0;
   String? _callError;
   String? _deviceWarning;
   String _roomState = 'Conectando';
@@ -111,6 +113,8 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
       _deviceWarning = null;
       _cameraEnabled = true;
       _microphoneEnabled = true;
+      _microphoneRecoveryPending = false;
+      _microphoneRecoveryAttempts = 0;
     });
 
     final controller = context.read<CallController>();
@@ -538,6 +542,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
         microphoneEnabled = microphoneTrack != null;
       } catch (error) {
         microphoneEnabled = false;
+        _microphoneRecoveryPending = true;
         if (mounted) {
           await _warnMediaToggleFailure(
             deviceLabel: 'Microfone',
@@ -628,6 +633,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
 
     if (_microphoneEnabled && audioStream == null) {
       problems.add('Microfone');
+      unawaited(_recoverMicrophone('watchdog_missing_audio_stream'));
     }
 
     if (problems.isEmpty) return;
@@ -705,6 +711,12 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
       });
       unawaited(_subscribeChat(room));
       _scheduleLocalMediaWatchdog('room_joined');
+      if (_microphoneRecoveryPending && !_microphoneEnabled) {
+        Timer(const Duration(seconds: 2), () {
+          if (!mounted || !_microphoneRecoveryPending) return;
+          unawaited(_recoverMicrophone('room_joined_initial_retry'));
+        });
+      }
     });
 
     room.on(sdk.Events.roomLeft, (String? errorMessage) {
@@ -836,6 +848,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
     if (room == null) return;
 
     if (_microphoneEnabled) {
+      _microphoneRecoveryPending = false;
       await room.muteMic();
     } else {
       sdk.CustomTrack? track;
@@ -858,11 +871,73 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
       }
 
       await room.unmuteMic(track);
+      _microphoneRecoveryPending = false;
+      _microphoneRecoveryAttempts = 0;
     }
 
     setState(() => _microphoneEnabled = !_microphoneEnabled);
     if (_microphoneEnabled) {
       _scheduleLocalMediaWatchdog('microphone_enabled');
+    }
+  }
+
+  Future<void> _recoverMicrophone(String trigger) async {
+    final room = _room;
+    if (room == null || !_joined || _deviceSwitching) return;
+    if (_microphoneRecoveryAttempts >= 3) return;
+
+    _microphoneRecoveryAttempts += 1;
+
+    try {
+      final track = await _createMicrophoneTrack();
+      if (track == null) {
+        throw Exception('O VideoSDK não conseguiu recriar a trilha de áudio.');
+      }
+
+      await room.unmuteMic(track);
+
+      if (!mounted) return;
+      setState(() {
+        _microphoneEnabled = true;
+        _microphoneRecoveryPending = false;
+        _deviceWarning = null;
+      });
+
+      await _sendTechnicalLog(
+        event: 'microphone_auto_recovered',
+        error: {
+          'trigger': trigger,
+          'attempt': _microphoneRecoveryAttempts,
+        },
+      );
+
+      _scheduleLocalMediaWatchdog('microphone_auto_recovered');
+    } catch (error) {
+      _microphoneRecoveryPending = true;
+
+      await _sendTechnicalLog(
+        event: 'microphone_auto_recovery_failed',
+        error: {
+          'trigger': trigger,
+          'attempt': _microphoneRecoveryAttempts,
+          'message': error.toString(),
+          'suspectedConcurrency':
+              _isPossibleDeviceConcurrency(error.toString()),
+        },
+      );
+
+      if (!mounted) return;
+      if (_microphoneRecoveryAttempts >= 3) {
+        await _warnMediaToggleFailure(
+          deviceLabel: 'Microfone',
+          reason: error.toString(),
+        );
+      } else {
+        Timer(const Duration(seconds: 3), () {
+          if (!mounted || !_microphoneRecoveryPending) return;
+          unawaited(_recoverMicrophone('retry_after_failure'));
+        });
+      }
     }
   }
 
