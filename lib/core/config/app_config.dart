@@ -2,6 +2,7 @@ enum Environment {
   development,
   homolog,
   production,
+  ngrok,
 }
 
 class AppConfig {
@@ -35,6 +36,8 @@ class AppConfig {
         return Environment.production;
       case 'homolog':
         return Environment.homolog;
+      case 'ngrok':
+        return Environment.ngrok;
       default:
         return Environment.development;
     }
@@ -46,6 +49,8 @@ class AppConfig {
         return 'https://api.gestalkconecta.com.br';
       case Environment.homolog:
         return 'https://api-staging.gestalkconecta.com.br';
+      case Environment.ngrok:
+        return 'https://1988-2804-14c-8784-9929-64f9-e1d3-d84-567b.ngrok-free.app';
       case Environment.development:
         return 'http://localhost:5000';
     }
@@ -56,7 +61,9 @@ class AppConfig {
       case Environment.production:
         return 'https://api.gestalkconecta.com.br';
       case Environment.homolog:
-        return 'https://api-hml.gestalkconecta.com.br';
+        return 'https://api-staging.gestalkconecta.com.br';
+      case Environment.ngrok:
+        return 'https://1988-2804-14c-8784-9929-64f9-e1d3-d84-567b.ngrok-free.app';
       case Environment.development:
         return 'http://localhost:3000';
     }
@@ -68,6 +75,8 @@ class AppConfig {
         return 'https://atendimento.gestalkconecta.com.br';
       case Environment.homolog:
         return 'https://front-staging.gestalkconecta.com.br';
+      case Environment.ngrok:
+        return 'https://1988-2804-14c-8784-9929-64f9-e1d3-d84-567b.ngrok-free.app';
       case Environment.development:
         return 'http://localhost:3000';
     }

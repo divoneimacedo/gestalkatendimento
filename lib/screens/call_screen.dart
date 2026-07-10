@@ -38,6 +38,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
   sdk.Room? _room;
   final _devicePreferences = const CallDevicePreferences();
   Timer? _localMediaWatchdogTimer;
+  Timer? _microphoneRepublishTimer;
   final Map<String, sdk.Participant> _remoteParticipants = {};
   final List<sdk.PubSubMessage> _chatMessages = [];
   final TextEditingController _chatController = TextEditingController();
@@ -55,6 +56,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
   bool _enteringPictureInPicture = false;
   bool _windowWasMaximized = false;
   bool _microphoneRecoveryPending = false;
+  bool _microphoneRepublishing = false;
   int _unreadChatMessages = 0;
   int _microphoneRecoveryAttempts = 0;
   String? _callError;
@@ -83,6 +85,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
       windowManager.removeListener(this);
     }
     _localMediaWatchdogTimer?.cancel();
+    _microphoneRepublishTimer?.cancel();
     unawaited(_restoreWindowFromPictureInPicture());
     _leaveRoom();
     _chatController.dispose();
@@ -709,6 +712,9 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
           ..clear()
           ..addAll(room.participants);
       });
+      for (final participant in room.participants.values) {
+        _registerRemoteParticipantMediaEvents(participant);
+      }
       unawaited(_subscribeChat(room));
       _scheduleLocalMediaWatchdog('room_joined');
       if (_microphoneRecoveryPending && !_microphoneEnabled) {
@@ -734,6 +740,7 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
     });
 
     room.on(sdk.Events.participantJoined, (sdk.Participant participant) {
+      _registerRemoteParticipantMediaEvents(participant);
       setState(() => _remoteParticipants[participant.id] = participant);
     });
 
@@ -761,6 +768,42 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
         _callError = _extractVideoSdkError(error);
         _joining = false;
       });
+    });
+  }
+
+  void _registerRemoteParticipantMediaEvents(sdk.Participant participant) {
+    participant.on(sdk.Events.streamDisabled, (sdk.Stream stream) {
+      if (stream.kind != 'audio') return;
+      unawaited(
+        _sendTechnicalLog(
+          event: 'remote_audio_stream_disabled',
+          sdkState: {
+            'remoteParticipantId': participant.id,
+            'remoteDisplayName': participant.displayName,
+            'streamId': stream.id,
+            'streamKind': stream.kind,
+            'localMicrophoneEnabled': _microphoneEnabled,
+          },
+        ),
+      );
+      _scheduleMicrophoneRepublish('remote_audio_stream_disabled');
+    });
+
+    participant.on(sdk.Events.streamEnabled, (sdk.Stream stream) {
+      if (stream.kind != 'audio') return;
+      unawaited(
+        _sendTechnicalLog(
+          event: 'remote_audio_stream_enabled',
+          sdkState: {
+            'remoteParticipantId': participant.id,
+            'remoteDisplayName': participant.displayName,
+            'streamId': stream.id,
+            'streamKind': stream.kind,
+            'localMicrophoneEnabled': _microphoneEnabled,
+          },
+        ),
+      );
+      _scheduleMicrophoneRepublish('remote_audio_stream_enabled');
     });
   }
 
@@ -938,6 +981,65 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
           unawaited(_recoverMicrophone('retry_after_failure'));
         });
       }
+    }
+  }
+
+  void _scheduleMicrophoneRepublish(String trigger) {
+    if (!_microphoneEnabled) return;
+
+    _microphoneRepublishTimer?.cancel();
+    _microphoneRepublishTimer = Timer(const Duration(milliseconds: 650), () {
+      if (!mounted) return;
+      unawaited(_republishMicrophone(trigger));
+    });
+  }
+
+  Future<void> _republishMicrophone(String trigger) async {
+    final room = _room;
+    if (room == null || !_joined || !_microphoneEnabled) return;
+    if (_microphoneRepublishing || _deviceSwitching) return;
+
+    _microphoneRepublishing = true;
+
+    try {
+      final track = await _createMicrophoneTrack();
+      if (track == null) {
+        throw Exception('O VideoSDK não conseguiu recriar a trilha de áudio.');
+      }
+
+      await _sendTechnicalLog(
+        event: 'microphone_republish_started',
+        sdkState: {
+          'trigger': trigger,
+          'localMicrophoneEnabled': _microphoneEnabled,
+        },
+      );
+
+      await room.muteMic();
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      await room.unmuteMic(track);
+
+      await _sendTechnicalLog(
+        event: 'microphone_republish_finished',
+        sdkState: {
+          'trigger': trigger,
+          'localMicrophoneEnabled': _microphoneEnabled,
+        },
+      );
+
+      _scheduleLocalMediaWatchdog('microphone_republish_finished');
+    } catch (error) {
+      await _sendTechnicalLog(
+        event: 'microphone_republish_failed',
+        error: {
+          'trigger': trigger,
+          'message': error.toString(),
+          'suspectedConcurrency':
+              _isPossibleDeviceConcurrency(error.toString()),
+        },
+      );
+    } finally {
+      _microphoneRepublishing = false;
     }
   }
 
@@ -1374,6 +1476,8 @@ class _CallScreenState extends State<CallScreen> with WindowListener {
   }
 
   void _leaveRoom() {
+    _microphoneRepublishTimer?.cancel();
+    _microphoneRepublishing = false;
     try {
       final room = _room;
       if (room != null && _chatSubscribed) {
