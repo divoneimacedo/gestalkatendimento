@@ -134,7 +134,7 @@ class _LoginHero extends StatelessWidget {
             ),
             const SizedBox(height: 22),
             Text(
-              'Somos a conexão que faltava entre você e os surdos.',
+              'Somos a conexão que faltava entre você e os deficientes auditivos.',
               textAlign: isWide ? TextAlign.left : TextAlign.center,
               style: const TextStyle(
                 color: Colors.white,

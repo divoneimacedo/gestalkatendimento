@@ -574,7 +574,7 @@ class _CompanyFormScreenState extends State<CompanyFormScreen> {
           style: TextStyle(fontWeight: FontWeight.w800),
         ),
         subtitle: const Text(
-          'Quando ativado, surdos deverão fazer cadastro e login antes de iniciar um atendimento.',
+          'Quando ativado, deficientes auditivos deverão fazer cadastro e login antes de iniciar um atendimento.',
         ),
       ),
     );
